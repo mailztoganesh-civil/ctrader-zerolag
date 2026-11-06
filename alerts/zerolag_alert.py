@@ -176,6 +176,13 @@ def send_telegram(text, state):
             print("Telegram getMe failed (token wrong?):", e)
         try:
             upd = json.loads(_get(f"https://api.telegram.org/bot{token}/getUpdates"))
+            print("Telegram getUpdates: ok=%s, updates=%d" % (upd.get("ok"), len(upd.get("result", []))))
+            try:
+                wh = json.loads(_get(f"https://api.telegram.org/bot{token}/getWebhookInfo"))
+                print("Telegram webhook url set:", bool(wh.get("result", {}).get("url")),
+                      "| pending:", wh.get("result", {}).get("pending_update_count"))
+            except Exception as e:
+                print("getWebhookInfo failed:", e)
             for u in reversed(upd.get("result", [])):
                 msg = u.get("message") or u.get("channel_post") or {}
                 if msg.get("chat", {}).get("id"):
