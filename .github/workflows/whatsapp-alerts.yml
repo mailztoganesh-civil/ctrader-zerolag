@@ -1,4 +1,4 @@
-name: Zero Lag WhatsApp alerts
+name: Zero Lag alerts (Telegram / WhatsApp)
 
 on:
   schedule:
@@ -27,6 +27,8 @@ jobs:
         env:
           CALLMEBOT_PHONE: ${{ secrets.CALLMEBOT_PHONE }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python3 alerts/zerolag_alert.py
 
       - name: Save state

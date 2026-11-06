@@ -138,10 +138,29 @@ def signals_at(z, i):
 
 
 # ---------------- messaging ----------------
+def send_telegram(text):
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat:
+        return None
+    data = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
+    req = urllib.request.Request("https://api.telegram.org/bot" + token + "/sendMessage", data=data)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            print("Telegram:", r.read().decode("utf-8", "replace")[:120])
+        return True
+    except Exception as e:
+        print("Telegram send failed:", e)
+        return False
+
+
 def send_whatsapp(text):
     if DRY_RUN:
-        print("---- WhatsApp (dry run) ----\n" + text)
+        print("---- Message (dry run) ----\n" + text)
         return True
+    tg = send_telegram(text)
+    if tg is not None:
+        return tg
     phone = os.environ.get("CALLMEBOT_PHONE", "").strip().lstrip("+")
     key = os.environ.get("CALLMEBOT_APIKEY", "").strip()
     if not phone or not key:
