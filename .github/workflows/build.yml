@@ -1,0 +1,33 @@
+name: Build cBot (.algo)
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            6.0.x
+            8.0.x
+
+      - name: Build
+        run: dotnet build ZeroLagTrendBot/ZeroLagTrendBot.csproj -c Release
+
+      - name: Collect .algo
+        shell: bash
+        run: |
+          mkdir -p out
+          find . -name "*.algo" -not -path "./out/*" -exec cp {} out/ \;
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZeroLagTrendBot-algo
+          path: out/*.algo
+          if-no-files-found: error
