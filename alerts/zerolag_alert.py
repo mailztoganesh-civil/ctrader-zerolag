@@ -141,18 +141,19 @@ def signals_at(z, i):
 def send_whatsapp(text):
     if DRY_RUN:
         print("---- WhatsApp (dry run) ----\n" + text)
-        return
+        return True
     phone = os.environ.get("CALLMEBOT_PHONE", "").strip().lstrip("+")
     key = os.environ.get("CALLMEBOT_APIKEY", "").strip()
     if not phone or not key:
         print("CALLMEBOT_PHONE / CALLMEBOT_APIKEY not set; message not sent:\n" + text)
-        return
+        return False
     url = ("https://api.callmebot.com/whatsapp.php?phone=" + urllib.parse.quote(phone)
            + "&text=" + urllib.parse.quote(text) + "&apikey=" + urllib.parse.quote(key))
     req = urllib.request.Request(url, headers={"User-Agent": "zerolag-alerts"})
     with urllib.request.urlopen(req, timeout=30) as r:
         body = r.read().decode("utf-8", "replace")
     print("CallMeBot response:", body[:200].replace("\n", " "))
+    return True
 
 
 def fmt_price(name, p):
@@ -190,11 +191,10 @@ def main():
         last_ts = bars[last_i][0]
         prev_ts = state.get(name)
 
-        if prev_ts is None:
-            # first run: report current trend, no back-fill of old signals
+        if not state.get("_started"):
             trend = "Bullish" if z["trd"][last_i] == 1 else "Bearish"
             first_run_lines.append(f"{name} M5: {trend} @ {fmt_price(name, z['cl'][last_i])}")
-        else:
+        if prev_ts is not None:
             for i in range(len(bars)):
                 if bars[i][0] <= prev_ts:
                     continue
@@ -210,7 +210,8 @@ def main():
         print(f"{name}: {len(bars)} bars, last closed {fmt_time(last_ts)} Dubai, trend {z['trd'][last_i]}")
 
     if first_run_lines:
-        send_whatsapp("✅ Zero Lag alerts started\n" + "\n".join(first_run_lines))
+        if send_whatsapp("✅ Zero Lag alerts started\n" + "\n".join(first_run_lines)):
+            state["_started"] = True
     if lines:
         send_whatsapp("⚡ Zero Lag signals\n\n" + "\n\n".join(lines))
     if not lines and not first_run_lines:
