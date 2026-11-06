@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Zero Lag Trend Signals -> WhatsApp alerts (via CallMeBot).
+Zero Lag Trend Signals -> Telegram (and optional WhatsApp via CallMeBot) alerts.
 
 Same math as ZeroLagTrendBot (port of "Zero Lag Trend Signals (MTF) [AlgoAlpha]",
 Mozilla Public License 2.0). Runs from GitHub Actions every 5 minutes, checks
@@ -8,6 +8,8 @@ every CLOSED bar since the last run, and sends one WhatsApp message with any
 new signals.
 
 Env:
+  TELEGRAM_BOT_TOKEN token from @BotFather (send /start to your bot once)
+  TELEGRAM_CHAT_ID  optional; auto-detected from /start if empty
   CALLMEBOT_PHONE   phone with country code, e.g. 9715XXXXXXXX (no +)
   CALLMEBOT_APIKEY  key received from CallMeBot
   STATE_FILE        path of JSON state (default alerts/state.json)
@@ -154,25 +156,68 @@ def send_telegram(text):
         return False
 
 
-def send_whatsapp(text):
-    if DRY_RUN:
-        print("---- Message (dry run) ----\n" + text)
-        return True
-    tg = send_telegram(text)
-    if tg is not None:
-        return tg
+def _get(url, timeout=30):
+    req = urllib.request.Request(url, headers={"User-Agent": "zerolag-alerts"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read().decode("utf-8", "replace")
+
+
+def send_telegram(text, state):
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return False
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip() or str(state.get("_tg_chat", ""))
+    if not chat_id:
+        # auto-detect: the chat that last messaged the bot (send /start to it once)
+        try:
+            upd = json.loads(_get(f"https://api.telegram.org/bot{token}/getUpdates"))
+            for u in reversed(upd.get("result", [])):
+                msg = u.get("message") or u.get("channel_post") or {}
+                if msg.get("chat", {}).get("id"):
+                    chat_id = str(msg["chat"]["id"])
+                    break
+        except Exception as e:
+            print("Telegram getUpdates failed:", e)
+        if not chat_id:
+            print("Telegram: no chat found yet. Open your bot in Telegram and send /start.")
+            return False
+        state["_tg_chat"] = chat_id
+    url = (f"https://api.telegram.org/bot{token}/sendMessage?chat_id=" + urllib.parse.quote(chat_id)
+           + "&text=" + urllib.parse.quote(text))
+    try:
+        body = _get(url)
+        ok = json.loads(body).get("ok", False)
+        print("Telegram sent:", ok)
+        return ok
+    except Exception as e:
+        print("Telegram send failed:", e)
+        return False
+
+
+def send_callmebot(text):
     phone = os.environ.get("CALLMEBOT_PHONE", "").strip().lstrip("+")
     key = os.environ.get("CALLMEBOT_APIKEY", "").strip()
     if not phone or not key:
-        print("CALLMEBOT_PHONE / CALLMEBOT_APIKEY not set; message not sent:\n" + text)
         return False
     url = ("https://api.callmebot.com/whatsapp.php?phone=" + urllib.parse.quote(phone)
            + "&text=" + urllib.parse.quote(text) + "&apikey=" + urllib.parse.quote(key))
-    req = urllib.request.Request(url, headers={"User-Agent": "zerolag-alerts"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        body = r.read().decode("utf-8", "replace")
-    print("CallMeBot response:", body[:200].replace("\n", " "))
-    return True
+    try:
+        print("CallMeBot response:", _get(url)[:200].replace("\n", " "))
+        return True
+    except Exception as e:
+        print("CallMeBot send failed:", e)
+        return False
+
+
+def send_alert(text, state):
+    if DRY_RUN:
+        print("---- Alert (dry run) ----\n" + text)
+        return True
+    sent_tg = send_telegram(text, state)
+    sent_wa = send_callmebot(text)
+    if not (sent_tg or sent_wa):
+        print("No messaging channel configured/working; message not sent:\n" + text)
+    return sent_tg or sent_wa
 
 
 def fmt_price(name, p):
@@ -229,10 +274,10 @@ def main():
         print(f"{name}: {len(bars)} bars, last closed {fmt_time(last_ts)} Dubai, trend {z['trd'][last_i]}")
 
     if first_run_lines:
-        if send_whatsapp("✅ Zero Lag alerts started\n" + "\n".join(first_run_lines)):
+        if send_alert("✅ Zero Lag alerts started\n" + "\n".join(first_run_lines), state):
             state["_started"] = True
     if lines:
-        send_whatsapp("⚡ Zero Lag signals\n\n" + "\n\n".join(lines))
+        send_alert("⚡ Zero Lag signals\n\n" + "\n\n".join(lines), state)
     if not lines and not first_run_lines:
         print("No new signals.")
 
