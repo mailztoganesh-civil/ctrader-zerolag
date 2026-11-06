@@ -25,7 +25,7 @@ namespace cAlgo.Robots
         [Parameter("Band Multiplier", Group = "Main", DefaultValue = 1.2, MinValue = 0.1)]
         public double Mult { get; set; }
 
-        [Parameter("History Bars", Group = "Main", DefaultValue = 1500, MinValue = 400)]
+        [Parameter("History Bars", Group = "Main", DefaultValue = 800, MinValue = 400)]
         public int CalcBars { get; set; }
 
         // ---------------- Entries ----------------
@@ -135,13 +135,13 @@ namespace cAlgo.Robots
             }
 
             _atr = Indicators.AverageTrueRange(14, MovingAverageType.Simple);
-            Print("ZeroLag bot started on {0} {1}", SymbolName, TimeFrame);
+            Print("ZeroLag bot started on {0} {1}, bars loaded: {2}", SymbolName, TimeFrame, Bars.Count);
         }
 
         private void EnsureHistory(Bars b)
         {
             int tries = 0;
-            while (b.Count < CalcBars + 2 && tries < 10)
+            while (b.Count < CalcBars + 2 && tries < 2)
             {
                 int loaded = b.LoadMoreHistory();
                 if (loaded <= 0) break;
