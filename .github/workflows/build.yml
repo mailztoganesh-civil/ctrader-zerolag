@@ -4,6 +4,8 @@ on:
   push:
     paths-ignore:
       - 'release/**'
+      - 'alerts/**'
+      - '.github/workflows/whatsapp-alerts.yml'
   workflow_dispatch:
 
 permissions:
