@@ -170,6 +170,11 @@ def send_telegram(text, state):
     if not chat_id:
         # auto-detect: the chat that last messaged the bot (send /start to it once)
         try:
+            me = json.loads(_get(f"https://api.telegram.org/bot{token}/getMe"))
+            print("Telegram token belongs to bot: @" + str(me.get("result", {}).get("username")))
+        except Exception as e:
+            print("Telegram getMe failed (token wrong?):", e)
+        try:
             upd = json.loads(_get(f"https://api.telegram.org/bot{token}/getUpdates"))
             for u in reversed(upd.get("result", [])):
                 msg = u.get("message") or u.get("channel_post") or {}
