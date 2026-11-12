@@ -72,6 +72,11 @@ def build_data():
 
 
 def load():
+    if os.environ.get("BT_SRC") == "yahoo":
+        sys.path.insert(0, os.path.dirname(__file__))
+        from bt2 import fetch
+        b = fetch("EURUSD=X", "5m", "60d")
+        return [(t, (b[i-1][3] if i else c), h, l, c) for i, (t, h, l, c) in enumerate(b)]
     if not os.path.exists(DATA):
         build_data()
     bars = []
