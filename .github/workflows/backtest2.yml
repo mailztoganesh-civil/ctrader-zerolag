@@ -5,6 +5,8 @@ on:
     inputs:
       script:
         default: bt2.py
+      h1:
+        default: ''
 
 jobs:
   study:
@@ -13,4 +15,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Study
-        run: python3 backtest/${{ github.event.inputs.script || 'bt2.py' }}
+        run: BT_H1='${{ github.event.inputs.h1 }}' python3 backtest/${{ github.event.inputs.script || 'bt2.py' }}

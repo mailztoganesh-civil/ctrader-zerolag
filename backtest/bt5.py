@@ -38,7 +38,8 @@ def sessions(bars, kind):
     for day, items in sorted(days.items()):
         rng = [i for i, m in items if r0 <= m < r1]
         after = [(i, m) for i, m in items if m >= r1 and m < flat]
-        if len(rng) < (r1 - r0) // 5 * 0.8 or not after:
+        step = (bars[1][0] - bars[0][0]) // 60 if len(bars) > 1 else 5
+        if len(rng) < (r1 - r0) // step * 0.8 or not after:
             continue
         hi = max(bars[i][1] for i in rng)
         lo = min(bars[i][2] for i in rng)
@@ -95,7 +96,21 @@ def stats(rs):
     return f"trades {len(rs):>3} | win {100*len(w)/len(rs):5.1f}% | PF {pf:4.2f} | net {sum(rs):+6.1f}R | maxDD {dd:4.1f}R"
 
 
+def main_h1():
+    """Robustness: same Asian-breakout logic on ~2 years of H1 candles."""
+    global COST
+    for sym in ["EURUSD=X", "GBPUSD=X", "EURJPY=X"]:
+        pip = 0.01 if "JPY" in sym else 0.0001
+        bars = fetch(sym, "1h", "730d")
+        print(f"\n=== {sym.replace('=X','')} ASIA breakout on H1 candles (~2 years, {len(bars)} bars) ===")
+        for sl_mode in ("far", "mid"):
+            for rr in (1.0, 1.5, 2.0):
+                print(f"SL {sl_mode:<3} TP {rr:<3}R  {stats(run(bars, pip, 'ASIA', sl_mode, rr))}")
+
+
 def main():
+    if os.environ.get("BT_H1"):
+        return main_h1()
     for sym in ["EURUSD=X", "GBPUSD=X", "EURJPY=X"]:
         pip = 0.01 if "JPY" in sym else 0.0001
         bars = fetch(sym, "5m", "60d")
