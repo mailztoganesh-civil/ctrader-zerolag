@@ -59,6 +59,17 @@ def main():
     with open(path, "w") as f:
         json.dump(out, f)
     print("dumped", len(trades), "trades")
+    rs = [t["r"] for t in trades]
+    w = [r for r in rs if r > 0]; gl = -sum(r for r in rs if r <= 0)
+    eq = pk = dd = 0.0
+    for r in rs: eq += r; pk = max(pk, eq); dd = max(dd, pk - eq)
+    weeks = {}
+    for t in trades:
+        dt = datetime.fromtimestamp(t["te"], timezone.utc); k = dt.isocalendar()[1]
+        weeks.setdefault(k, []).append(t["r"])
+    print(f"SUMMARY {os.environ.get('BT_SYM','EURUSD')}: trades {len(rs)}, win {100*len(w)/len(rs):.1f}%, PF {sum(w)/gl:.2f}, net {sum(rs):+.1f}R, maxDD {dd:.1f}R, "
+          f"weeks {len(weeks)}, per week {len(rs)/len(weeks):.1f}, positive weeks {sum(1 for v in weeks.values() if sum(v)>0)}")
+    print("WEEKS " + " ".join(f"{len(v)}:{sum(v):+.1f}" for k, v in sorted(weeks.items())))
 
 
 if __name__ == "__main__":

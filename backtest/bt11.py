@@ -19,8 +19,8 @@ from datetime import date, datetime, timedelta, timezone
 from itertools import product
 
 DATA = os.path.join(os.path.dirname(__file__), "data", "eurusd_m5.csv.gz")
-PIP = 0.0001
-COST = 0.9
+PIP = 0.01 if "JPY" in os.environ.get("BT_SYM", "") else 0.0001
+COST = float(os.environ.get("BT_COST", "0.9"))
 
 
 # ---------------- data ----------------
@@ -75,7 +75,7 @@ def load():
     if os.environ.get("BT_SRC") == "yahoo":
         sys.path.insert(0, os.path.dirname(__file__))
         from bt2 import fetch
-        b = fetch("EURUSD=X", "5m", "60d")
+        b = fetch(os.environ.get("BT_SYM", "EURUSD") + "=X", "5m", "60d")
         return [(t, (b[i-1][3] if i else c), h, l, c) for i, (t, h, l, c) in enumerate(b)]
     if not os.path.exists(DATA):
         build_data()
