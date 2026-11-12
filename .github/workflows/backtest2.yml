@@ -1,0 +1,13 @@
+name: Backtest filters and timeframes
+
+on:
+  workflow_dispatch:
+
+jobs:
+  study:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Study
+        run: python3 backtest/bt2.py

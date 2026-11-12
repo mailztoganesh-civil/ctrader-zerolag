@@ -7,6 +7,7 @@ on:
       - 'alerts/**'
       - 'backtest/**'
       - '.github/workflows/backtest.yml'
+      - '.github/workflows/backtest2.yml'
       - '.github/workflows/whatsapp-alerts.yml'
   workflow_dispatch:
 
