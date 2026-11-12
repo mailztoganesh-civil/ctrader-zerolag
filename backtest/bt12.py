@@ -55,7 +55,7 @@ def main():
     sample = dict(t=ctx.t[a:b], h=ctx.h[a:b], l=ctx.l[a:b], c=ctx.c[a:b],
                   ef=[round(x, 5) for x in ef[a:b]], es=[round(x, 5) for x in es[a:b]], a=a)
     out = dict(split=split, trades=trades, sample=sample, ex=ex)
-    path = os.environ.get("BT_DUMP", "backtest/ema_trades.json")
+    path = os.environ.get("BT_DUMP") or "/tmp/ema_trades.json"
     with open(path, "w") as f:
         json.dump(out, f)
     print("dumped", len(trades), "trades")
