@@ -17,6 +17,7 @@ from bt2 import fetch  # noqa: E402
 from bt6 import adx, ema  # noqa: E402
 
 PIP, COST = 0.0001, 0.9
+MIN_RISK = 3.0
 
 
 def atr(b, n=14):
@@ -46,7 +47,7 @@ def run(b, ind, A, S, T, hold=24):
         elif e50[i] < e200[i] and c[i] < e50[i] and h[i] >= e20[i] and c[i] < e20[i]: d = -1
         if not d: continue
         risk = S * at[i] / PIP
-        if risk < 3: continue
+        if risk < MIN_RISK: continue
         pos = (d, c[i], c[i] - d * S * at[i], c[i] + d * T * at[i], risk, i)
     return out
 

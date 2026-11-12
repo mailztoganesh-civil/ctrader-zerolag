@@ -52,7 +52,7 @@ def ema_cross(b, at, fast, slow, am, rr):
         up = ef[i] > es[i] and ef[i-1] <= es[i-1]; dn = ef[i] < es[i] and ef[i-1] >= es[i-1]
         if not (up or dn): continue
         d = 1 if up else -1; risk = am * at[i] / PIP
-        if risk < 2: continue
+        if risk < 1: continue
         risks.append(risk)
         pos = (d, c[i], c[i] - d * risk * PIP, c[i] + d * risk * PIP * rr, risk)
     return out, (sum(risks) / len(risks) if risks else 0)
@@ -62,12 +62,14 @@ def main():
     b = fetch_1m()
     d0 = datetime.fromtimestamp(b[0][0], timezone.utc).date(); d1 = datetime.fromtimestamp(b[-1][0], timezone.utc).date()
     print(f"EURUSD M1 {d0} -> {d1}, {len(b)} bars")
-    bt14.study("EURUSD M1 trend pullback", b, 40)
     at = bt14.atr(b); mid = b[len(b) // 2][0]
+    v = sorted(x / PIP for x in at[20:])
+    print(f"M1 ATR(14): median {v[len(v)//2]:.2f} pips, 90th pct {v[int(len(v)*0.9)]:.2f} pips; cost per trade {COST} pips")
+    bt14.MIN_RISK = 1.0
+    bt14.study("EURUSD M1 trend pullback", b, 40)
     print("\n=== EURUSD M1 EMA crossover (fast, slow, SLxATR, RR) ===")
-    for fast, slow, am, rr in product(((34, 50), (50, 200), (100, 300)), (3.0, 6.0), (1.0, 3.0)):
-        res, avg = ema_cross(b, at, fast[0], fast[1], am, rr) if False else ema_cross(b, at, fast[0], fast[1], am, rr), 0
-        res, avg = res
+    for fast, am, rr in product(((34, 50), (50, 200), (100, 300)), (3.0, 6.0), (1.0, 3.0)):
+        res, avg = ema_cross(b, at, fast[0], fast[1], am, rr)
         a = bt14.st([r for t, r in res if t < mid]); z = bt14.st([r for t, r in res if t >= mid])
         print(f"  ({fast[0]},{fast[1]},{am},{rr}) avg SL {avg:4.1f}p  1st {bt14.fmt(a)}  ||  2nd {bt14.fmt(z)}")
 
