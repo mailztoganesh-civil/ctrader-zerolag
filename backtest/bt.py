@@ -21,9 +21,9 @@ import zerolag_alert as za  # noqa: E402
 
 SYMBOL = os.environ.get("BT_SYMBOL", "EURUSD=X")
 PIP = 0.01 if "JPY" in SYMBOL else 0.0001
-COST_PIPS = 0.9
-MIN_SL_PIPS = 5.0
-RR = 2.0
+COST_PIPS = float(os.environ.get("BT_COST", "0.9"))
+MIN_SL_PIPS = float(os.environ.get("BT_MINSL", "5"))
+RR = float(os.environ.get("BT_RR", "2"))
 MAX_POS = 2
 
 
