@@ -9,7 +9,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 os.environ["BT_SRC"] = "yahoo"
 import bt11  # noqa: E402
 
-FAST, SLOW, WS, WE, AM, RR, CLOSE_H = 34, 50, 7, 16, 3.0, 3.0, 20
+FAST, SLOW, WS, AM, RR, CLOSE_H = 34, 50, 7, 3.0, 3.0, 20
+WE = int(os.environ.get("BT_WE", "16"))
 
 
 def main():
@@ -54,7 +55,17 @@ def main():
     a = max(0, ex["ie"] - 60); b = min(len(ctx.c), ex["ix"] + 40)
     sample = dict(t=ctx.t[a:b], h=ctx.h[a:b], l=ctx.l[a:b], c=ctx.c[a:b],
                   ef=[round(x, 5) for x in ef[a:b]], es=[round(x, 5) for x in es[a:b]], a=a)
-    out = dict(split=split, trades=trades, sample=sample, ex=ex)
+    day = os.environ.get("BT_DAY")
+    if day:
+        idx = [i for i, x in enumerate(ctx.t) if str(datetime.fromtimestamp(x, timezone.utc).date()) == day
+               and datetime.fromtimestamp(x, timezone.utc).hour < 21]
+        a, b = idx[0], idx[-1] + 1
+        sample = dict(t=ctx.t[a:b], h=ctx.h[a:b], l=ctx.l[a:b], c=ctx.c[a:b],
+                      ef=[round(x, 5) for x in ef[a:b]], es=[round(x, 5) for x in es[a:b]], a=a)
+        trades_day = [t for t in trades if a <= t["ie"] < b]
+        out = dict(day=day, trades=trades_day, sample=sample)
+    else:
+        out = dict(split=split, trades=trades, sample=sample, ex=ex)
     path = os.environ.get("BT_DUMP") or "/tmp/ema_trades.json"
     with open(path, "w") as f:
         json.dump(out, f)

@@ -15,6 +15,8 @@ on:
         default: ''
       cost:
         default: ''
+      extra:
+        default: ''
 
 permissions:
   contents: write
@@ -26,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Study
-        run: BT_SYM='${{ github.event.inputs.sym || 'EURUSD' }}' BT_COST='${{ github.event.inputs.cost || '0.9' }}' BT_SRC='${{ github.event.inputs.src }}' BT_DUMP='${{ github.event.inputs.dump }}' BT_H1='${{ github.event.inputs.h1 }}' python3 backtest/${{ github.event.inputs.script || 'bt2.py' }}
+        run: ${{ github.event.inputs.extra }} BT_SYM='${{ github.event.inputs.sym || 'EURUSD' }}' BT_COST='${{ github.event.inputs.cost || '0.9' }}' BT_SRC='${{ github.event.inputs.src }}' BT_DUMP='${{ github.event.inputs.dump }}' BT_H1='${{ github.event.inputs.h1 }}' python3 backtest/${{ github.event.inputs.script || 'bt2.py' }}
       - name: Commit dump
         if: ${{ github.event.inputs.dump != '' }}
         run: |
