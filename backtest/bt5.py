@@ -46,8 +46,12 @@ def sessions(bars, kind):
         yield day, hi, lo, after, e1
 
 
+LOG = []
+
+
 def run(bars, pip, kind, sl_mode, rr, min_rng=0, max_rng=1e9):
     out = []
+    LOG.clear()
     for day, rh, rl, after, e1 in sessions(bars, kind):
         width = (rh - rl) / pip
         if width < min_rng or width > max_rng:
@@ -68,7 +72,13 @@ def run(bars, pip, kind, sl_mode, rr, min_rng=0, max_rng=1e9):
                 if hit is None and last:
                     hit = c
                 if hit is not None:
-                    out.append(((hit - e) / pip * d - COST) / risk)
+                    r = ((hit - e) / pip * d - COST) / risk
+                    out.append(r)
+                    why = "TP" if hit == tp else ("SL" if hit == sl else "Time exit")
+                    LOG.append({"day": str(day), "dir": d, "rh": rh, "rl": rl, "entry": e, "sl": sl, "tp": tp,
+                                "exit": hit, "t_in": bars[t_in][0], "t_out": bars[i][0], "why": why,
+                                "r": round(r, 2), "pips": round((hit - e) / pip * d - COST, 1),
+                                "range_pips": round((rh - rl) / pip, 1)})
                     break
                 continue
             if m >= e1:
@@ -81,6 +91,7 @@ def run(bars, pip, kind, sl_mode, rr, min_rng=0, max_rng=1e9):
             if risk < 3:
                 continue
             pos = (d, c, stop, c + d * risk * pip * rr, risk)
+            t_in = i
     return out
 
 
@@ -111,6 +122,23 @@ def main_h1():
 def main():
     if os.environ.get("BT_H1"):
         return main_h1()
+    if os.environ.get("BT_DUMP"):
+        import json
+        bars = fetch("EURUSD=X", "5m", "60d")
+        cutoff = bars[-1][0] - 31 * 86400
+        rs = run(bars, 0.0001, "ASIA", "mid", 2.0)
+        trades = [t for t in LOG if t["t_in"] >= cutoff]
+        # keep M5 candles for each trade day (00:00-20:00 UTC) for mini charts
+        days = {t["day"] for t in trades}
+        candles = {}
+        for b in bars:
+            d = datetime.fromtimestamp(b[0], timezone.utc)
+            if str(d.date()) in days and d.hour < 20:
+                candles.setdefault(str(d.date()), []).append([b[0], round(b[1], 5), round(b[2], 5), round(b[3], 5)])
+        with open(os.environ["BT_DUMP"], "w") as f:
+            json.dump({"trades": trades, "candles": candles}, f)
+        print("dumped", len(trades), "trades;", stats([t["r"] for t in trades]))
+        return
     for sym in ["EURUSD=X", "GBPUSD=X", "EURJPY=X"]:
         pip = 0.01 if "JPY" in sym else 0.0001
         bars = fetch(sym, "5m", "60d")
