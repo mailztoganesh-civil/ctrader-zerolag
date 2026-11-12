@@ -32,6 +32,12 @@ namespace cAlgo.Robots
         [Parameter("Entry Mode", Group = "Entries", DefaultValue = EntryMode.TrendFlip)]
         public EntryMode Mode { get; set; }
 
+        [Parameter("Pullback Needs Impulse First", Group = "Entries", DefaultValue = true)]
+        public bool PullbackNeedsImpulse { get; set; }
+
+        [Parameter("Impulse Size (x ATR)", Group = "Entries", DefaultValue = 1.0, MinValue = 0.1)]
+        public double ImpulseAtr { get; set; }
+
         [Parameter("Allow Buys", Group = "Entries", DefaultValue = true)]
         public bool AllowLong { get; set; }
 
@@ -173,6 +179,9 @@ namespace cAlgo.Robots
 
         // Builds the Zero-Lag trend state on CLOSED bars. Arrays oldest-first;
         // last element = last closed bar. Returns bar count or 0 if not enough data.
+        private double[] _lastHi, _lastLo, _lastAtr;
+        private int _lastStart;
+
         private int Calc(Bars b, out double[] cl, out double[] zl, out double[] vol, out int[] trd)
         {
             cl = null; zl = null; vol = null; trd = null;
@@ -246,6 +255,7 @@ namespace cAlgo.Robots
                 if (cl[i] < dn0 && cl[i - 1] >= dn1) t = -1;
                 trd[i] = t;
             }
+            _lastHi = hi; _lastLo = lo; _lastAtr = atr; _lastStart = start;
             return n;
         }
 
@@ -257,11 +267,18 @@ namespace cAlgo.Robots
                 return;
             }
 
+            var hiA = _lastHi; var loA = _lastLo; var atrA = _lastAtr; int startA = _lastStart;
             int i = c.Length - 1, j = c.Length - 2;
             bool flipUp = t[i] == 1 && t[j] <= 0;
             bool flipDn = t[i] == -1 && t[j] >= 0;
             bool pbUp = t[i] == 1 && t[j] == 1 && c[i] > z[i] && c[j] <= z[j];
             bool pbDn = t[i] == -1 && t[j] == -1 && c[i] < z[i] && c[j] >= z[j];
+            if (PullbackNeedsImpulse)
+            {
+                ValidPullbacks(c, hiA, loA, z, atrA, t, startA, out bool okUp, out bool okDn);
+                if (pbUp && !okUp) { Print("Buy pullback ignored: no impulse up since flip / last entry"); pbUp = false; }
+                if (pbDn && !okDn) { Print("Sell pullback ignored: no impulse down since flip / last entry"); pbDn = false; }
+            }
 
             // MTF filter values
             var mtf = new int[5];
@@ -317,6 +334,43 @@ namespace cAlgo.Robots
             {
                 if (MtfAllows(-1, mtf, ok)) Open(TradeType.Sell, z[i], v[i], flipDn ? "bear flip" : "bear pullback");
                 else Print("Short signal blocked by MTF filter");
+            }
+        }
+
+        // Pullback is valid only after price first moved in the trend direction
+        // (>= ImpulseAtr x ATR beyond the flip close / previous leg extreme).
+        private void ValidPullbacks(double[] c, double[] hi, double[] lo, double[] z, double[] atr, int[] t,
+                                    int start, out bool okUp, out bool okDn)
+        {
+            okUp = false; okDn = false;
+            int dir = 0;
+            double extreme = 0, refP = 0;
+            bool impulse = false;
+            for (int k = start + 1; k < c.Length; k++)
+            {
+                okUp = false; okDn = false;
+                if (t[k] != t[k - 1])
+                {
+                    dir = t[k];
+                    refP = c[k];
+                    extreme = dir == 1 ? hi[k] : lo[k];
+                    impulse = false;
+                    continue;
+                }
+                if (dir == 1)
+                {
+                    if (hi[k] > extreme) extreme = hi[k];
+                    if (extreme - refP >= ImpulseAtr * atr[k]) impulse = true;
+                    bool pb = c[k] > z[k] && c[k - 1] <= z[k - 1];
+                    if (pb && impulse) { okUp = true; impulse = false; refP = extreme; }
+                }
+                else if (dir == -1)
+                {
+                    if (lo[k] < extreme) extreme = lo[k];
+                    if (refP - extreme >= ImpulseAtr * atr[k]) impulse = true;
+                    bool pb = c[k] < z[k] && c[k - 1] >= z[k - 1];
+                    if (pb && impulse) { okDn = true; impulse = false; refP = extreme; }
+                }
             }
         }
 

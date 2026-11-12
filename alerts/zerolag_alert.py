@@ -34,6 +34,8 @@ LENGTH = 70          # Zero-Lag EMA look-back (Pine default)
 MULT = 1.2           # band multiplier (Pine default)
 ALERT_FLIPS = True       # big arrows: trend flip
 ALERT_PULLBACKS = True   # small arrows: pullback entry in trend
+PULLBACK_NEEDS_IMPULSE = True  # pullback only after price first moved with the trend
+IMPULSE_ATR = 1.0              # impulse size in ATR
 DUBAI = timezone(timedelta(hours=4))
 
 STATE_FILE = os.environ.get("STATE_FILE", "alerts/state.json")
@@ -117,7 +119,37 @@ def zero_lag(bars):
             t = -1
         trd[i] = t
 
-    return {"cl": cl, "zl": zl, "vol": vol, "trd": trd, "start": start}
+    # valid pullbacks: price must first move IMPULSE_ATR x ATR in trend direction
+    ok_up = [False] * n
+    ok_dn = [False] * n
+    d = 0
+    extreme = ref = 0.0
+    impulse = False
+    for k in range(start + 1, n):
+        if trd[k] != trd[k - 1]:
+            d = trd[k]
+            ref = cl[k]
+            extreme = hi[k] if d == 1 else lo[k]
+            impulse = False
+            continue
+        if d == 1:
+            extreme = max(extreme, hi[k])
+            if extreme - ref >= IMPULSE_ATR * atr[k]:
+                impulse = True
+            if cl[k] > zl[k] and cl[k - 1] <= zl[k - 1] and impulse:
+                ok_up[k] = True
+                impulse = False
+                ref = extreme
+        elif d == -1:
+            extreme = min(extreme, lo[k])
+            if ref - extreme >= IMPULSE_ATR * atr[k]:
+                impulse = True
+            if cl[k] < zl[k] and cl[k - 1] >= zl[k - 1] and impulse:
+                ok_dn[k] = True
+                impulse = False
+                ref = extreme
+
+    return {"cl": cl, "zl": zl, "vol": vol, "trd": trd, "start": start, "ok_up": ok_up, "ok_dn": ok_dn}
 
 
 def signals_at(z, i):
@@ -133,9 +165,11 @@ def signals_at(z, i):
             out.append(("SELL", "Bearish trend flip"))
     if ALERT_PULLBACKS:
         if t[i] == 1 and t[i - 1] == 1 and cl[i] > zl[i] and cl[i - 1] <= zl[i - 1]:
-            out.append(("BUY", "Bullish pullback entry"))
+            if not PULLBACK_NEEDS_IMPULSE or z["ok_up"][i]:
+                out.append(("BUY", "Bullish pullback entry"))
         if t[i] == -1 and t[i - 1] == -1 and cl[i] < zl[i] and cl[i - 1] >= zl[i - 1]:
-            out.append(("SELL", "Bearish pullback entry"))
+            if not PULLBACK_NEEDS_IMPULSE or z["ok_dn"][i]:
+                out.append(("SELL", "Bearish pullback entry"))
     return out
 
 
