@@ -49,6 +49,7 @@ def run(bars, z, use_pullbacks=True, impulse=False, loss_filter=False, flip_only
     cl, zl, vol, t = z["cl"], z["zl"], z["vol"], z["trd"]
     open_pos = []
     results = []          # R per closed trade
+    log = []              # detailed trade records
     streak_side, streak, blocked = None, 0, None
 
     def register(side, r):
@@ -63,10 +64,11 @@ def run(bars, z, use_pullbacks=True, impulse=False, loss_filter=False, flip_only
         else:
             streak_side, streak = None, 0
 
-    def close(p, price_exit):
+    def close(p, price_exit, i_exit=None, why=""):
         pips = (price_exit - p["entry"]) / PIP * p["dir"]
         r = (pips - COST_PIPS) / p["sl_pips"]
         results.append(r)
+        log.append(dict(p, exit=price_exit, i_exit=i_exit, why=why, r=round(r, 2)))
         if loss_filter:
             register(p["dir"], r)
 
@@ -76,16 +78,16 @@ def run(bars, z, use_pullbacks=True, impulse=False, loss_filter=False, flip_only
         for p in open_pos:
             if p["dir"] == 1:
                 if lo[i] <= p["sl"]:
-                    close(p, p["sl"])
+                    close(p, p["sl"], i, "SL")
                 elif hi[i] >= p["tp"]:
-                    close(p, p["tp"])
+                    close(p, p["tp"], i, "TP")
                 else:
                     still.append(p)
             else:
                 if hi[i] >= p["sl"]:
-                    close(p, p["sl"])
+                    close(p, p["sl"], i, "SL")
                 elif lo[i] <= p["tp"]:
-                    close(p, p["tp"])
+                    close(p, p["tp"], i, "TP")
                 else:
                     still.append(p)
         open_pos = still
@@ -106,7 +108,7 @@ def run(bars, z, use_pullbacks=True, impulse=False, loss_filter=False, flip_only
             keep = []
             for p in open_pos:
                 if (flip_dn and p["dir"] == 1) or (flip_up and p["dir"] == -1):
-                    close(p, cl[i])
+                    close(p, cl[i], i, "Flip exit")
                 else:
                     keep.append(p)
             open_pos = keep
@@ -133,10 +135,14 @@ def run(bars, z, use_pullbacks=True, impulse=False, loss_filter=False, flip_only
             sl_pips = max(abs(entry - band) / PIP, MIN_SL_PIPS)
             sl = entry - d * sl_pips * PIP
             tp = entry + d * sl_pips * PIP * RR
-            open_pos.append({"dir": d, "entry": entry, "sl": sl, "tp": tp, "sl_pips": sl_pips})
+            kind = "flip" if ((d == 1 and flip_up) or (d == -1 and flip_dn)) else "pullback"
+            open_pos.append({"dir": d, "entry": entry, "sl": sl, "tp": tp, "sl_pips": round(sl_pips, 1),
+                             "i_entry": i, "kind": kind})
             if loss_filter and blocked is not None and d != blocked:
                 blocked, streak_side, streak = None, None, 0
 
+    if os.environ.get("BT_LOG"):
+        return results, log
     return results
 
 
@@ -171,6 +177,24 @@ def main():
         ("E  Trend flips only", dict(use_pullbacks=False)),
         ("F  Flips only + 2-loss block", dict(use_pullbacks=False, loss_filter=True)),
     ]
+    if os.environ.get("BT_DUMP"):
+        os.environ["BT_LOG"] = "1"
+        rs, log = run(bars, z, impulse=True, loss_filter=True)
+        n = len(bars)
+        a = n - 330
+        sample = {
+            "symbol": SYMBOL,
+            "bars": [[b[0], round(b[1], 5), round(b[2], 5), round(b[3], 5)] for b in bars[a:]],
+            "zl": [round(x, 5) for x in z["zl"][a:]],
+            "vol": [round(x, 5) for x in z["vol"][a:]],
+            "trend": z["trd"][a:],
+            "trades": [dict(t, i_entry=t["i_entry"] - a, i_exit=t["i_exit"] - a)
+                       for t in log if t["i_entry"] >= a],
+        }
+        with open(os.environ["BT_DUMP"], "w") as f:
+            json.dump(sample, f)
+        print("dumped", len(sample["trades"]), "trades")
+        return
     for name, kw in variants:
         print(stats(name, run(bars, z, **kw)))
 
