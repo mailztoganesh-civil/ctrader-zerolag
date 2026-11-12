@@ -26,19 +26,22 @@ jobs:
             6.0.x
             8.0.x
 
-      - name: Build
-        run: dotnet build ZeroLagTrendBot/ZeroLagTrendBot.csproj -c Release
-
-      - name: Collect .algo
+      - name: Build each bot and collect its .algo
         shell: bash
         run: |
           mkdir -p out
-          find . -name "*.algo" -not -path "./out/*" -exec cp {} out/ \;
+          for proj in ZeroLagTrendBot AsianBreakoutBot; do
+            find . -name "*.algo" -not -path "./out/*" -not -path "./release/*" -delete
+            dotnet build $proj/$proj.csproj -c Release
+            f=$(find . -name "*.algo" -not -path "./out/*" -not -path "./release/*" | head -1)
+            echo "$proj -> $f"
+            cp "$f" "out/$proj.algo"
+          done
           ls -la out
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ZeroLagTrendBot-algo
+          name: cbots-algo
           path: out/*.algo
           if-no-files-found: error
 
