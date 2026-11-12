@@ -179,7 +179,8 @@ def main():
     ]
     if os.environ.get("BT_DUMP"):
         os.environ["BT_LOG"] = "1"
-        rs, log = run(bars, z, impulse=True, loss_filter=True)
+        old = os.environ.get("BT_VARIANT") == "old"
+        rs, log = run(bars, z, impulse=not old, loss_filter=not old)
         n = len(bars)
         a = n - 330
         sample = {
