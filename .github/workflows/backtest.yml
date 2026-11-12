@@ -1,0 +1,17 @@
+name: Backtest Zero Lag rules
+
+on:
+  workflow_dispatch:
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: EURUSD
+        run: BT_SYMBOL=EURUSD=X python3 backtest/bt.py
+      - name: EURJPY
+        run: BT_SYMBOL=EURJPY=X python3 backtest/bt.py
+      - name: GBPUSD
+        run: BT_SYMBOL=GBPUSD=X python3 backtest/bt.py

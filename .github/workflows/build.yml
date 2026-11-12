@@ -5,6 +5,8 @@ on:
     paths-ignore:
       - 'release/**'
       - 'alerts/**'
+      - 'backtest/**'
+      - '.github/workflows/backtest.yml'
       - '.github/workflows/whatsapp-alerts.yml'
   workflow_dispatch:
 
