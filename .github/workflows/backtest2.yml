@@ -2,6 +2,9 @@ name: Backtest filters and timeframes
 
 on:
   workflow_dispatch:
+    inputs:
+      script:
+        default: bt2.py
 
 jobs:
   study:
@@ -10,4 +13,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Study
-        run: python3 backtest/bt2.py
+        run: python3 backtest/${{ github.event.inputs.script || 'bt2.py' }}
