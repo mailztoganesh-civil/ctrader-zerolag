@@ -111,6 +111,16 @@ namespace cAlgo.Robots
         [Parameter("End Hour UTC", Group = "Filters", DefaultValue = 18, MinValue = 0, MaxValue = 23)]
         public int EndHour { get; set; }
 
+        // ---------------- Loss filter ----------------
+        [Parameter("Use Loss Filter", Group = "Loss Filter", DefaultValue = true)]
+        public bool UseLossFilter { get; set; }
+
+        [Parameter("Consecutive Losses To Block Side", Group = "Loss Filter", DefaultValue = 2, MinValue = 1)]
+        public int LossesToBlock { get; set; }
+
+        [Parameter("Opposite Side Only On Trend Flip", Group = "Loss Filter", DefaultValue = true)]
+        public bool OppositeOnlyOnFlip { get; set; }
+
         [Parameter("Label", Group = "Misc", DefaultValue = "ZeroLag")]
         public string Label { get; set; }
 
@@ -119,6 +129,11 @@ namespace cAlgo.Robots
         private TimeFrame[] _tfs;
         private Bars[] _mtfBars;
         private AverageTrueRange _atr;
+
+        // loss-filter state
+        private TradeType? _streakSide;      // side of the current losing streak
+        private int _streak;                 // consecutive losses on that side
+        private TradeType? _blockedSide;     // side currently blocked
 
         protected override void OnStart()
         {
@@ -136,6 +151,13 @@ namespace cAlgo.Robots
 
             _atr = Indicators.AverageTrueRange(14, MovingAverageType.Simple);
             Print("ZeroLag bot started on {0} {1}, bars loaded: {2}", SymbolName, TimeFrame, Bars.Count);
+
+            if (UseLossFilter)
+            {
+                RebuildLossState();
+                Positions.Closed += OnPositionClosed;
+                Print("Loss filter: {0}", LossStateText());
+            }
         }
 
         private void EnsureHistory(Bars b)
@@ -270,6 +292,22 @@ namespace cAlgo.Robots
             bool longSig = (Mode != EntryMode.Pullback && flipUp) || (Mode != EntryMode.TrendFlip && pbUp);
             bool shortSig = (Mode != EntryMode.Pullback && flipDn) || (Mode != EntryMode.TrendFlip && pbDn);
 
+            if (UseLossFilter && _blockedSide.HasValue)
+            {
+                if (_blockedSide.Value == TradeType.Buy)
+                {
+                    if (longSig) Print("Buy signal skipped: {0}", LossStateText());
+                    longSig = false;
+                    if (OppositeOnlyOnFlip && shortSig && !flipDn) { Print("Sell pullback skipped: waiting for SELL trend flip"); shortSig = false; }
+                }
+                else
+                {
+                    if (shortSig) Print("Sell signal skipped: {0}", LossStateText());
+                    shortSig = false;
+                    if (OppositeOnlyOnFlip && longSig && !flipUp) { Print("Buy pullback skipped: waiting for BUY trend flip"); longSig = false; }
+                }
+            }
+
             if (longSig && AllowLong)
             {
                 if (MtfAllows(1, mtf, ok)) Open(TradeType.Buy, z[i], v[i], flipUp ? "bull flip" : "bull pullback");
@@ -280,6 +318,64 @@ namespace cAlgo.Robots
                 if (MtfAllows(-1, mtf, ok)) Open(TradeType.Sell, z[i], v[i], flipDn ? "bear flip" : "bear pullback");
                 else Print("Short signal blocked by MTF filter");
             }
+        }
+
+        // ---------------- Loss filter ----------------
+        private void RegisterClose(TradeType side, double netProfit)
+        {
+            if (netProfit < 0)
+            {
+                if (_streakSide.HasValue && _streakSide.Value == side) _streak++;
+                else { _streakSide = side; _streak = 1; }
+
+                if (_streak >= LossesToBlock)
+                    _blockedSide = side;
+            }
+            else
+            {
+                // a win (or break-even) breaks the losing streak
+                _streak = 0;
+                _streakSide = null;
+            }
+        }
+
+        private void RebuildLossState()
+        {
+            _streakSide = null; _streak = 0; _blockedSide = null;
+            var trades = new System.Collections.Generic.List<HistoricalTrade>();
+            foreach (var t in History)
+                if (t.Label == Label && t.SymbolName == SymbolName)
+                    trades.Add(t);
+            trades.Sort((a, b) => a.ClosingTime.CompareTo(b.ClosingTime));
+            foreach (var t in trades)
+            {
+                // an opposite-side trade after a block lifts the block
+                if (_blockedSide.HasValue && t.TradeType != _blockedSide.Value)
+                {
+                    _blockedSide = null;
+                }
+                RegisterClose(t.TradeType, t.NetProfit);
+            }
+        }
+
+        private void OnPositionClosed(PositionClosedEventArgs args)
+        {
+            var p = args.Position;
+            if (p.Label != Label || p.SymbolName != SymbolName) return;
+            RegisterClose(p.TradeType, p.NetProfit);
+            Print("Trade closed {0} net {1:F2} -> {2}", p.TradeType, p.NetProfit, LossStateText());
+        }
+
+        private string LossStateText()
+        {
+            if (_blockedSide.HasValue)
+                return string.Format("{0} BLOCKED after {1} losses in a row; waiting for {2}{3}",
+                    _blockedSide.Value, LossesToBlock,
+                    _blockedSide.Value == TradeType.Buy ? "SELL" : "BUY",
+                    OppositeOnlyOnFlip ? " trend flip" : " signal");
+            return _streak > 0
+                ? string.Format("{0} losing streak {1}/{2}", _streakSide, _streak, LossesToBlock)
+                : "no losing streak";
         }
 
         private bool MtfAllows(int dir, int[] mtf, bool[] ok)
@@ -382,6 +478,13 @@ namespace cAlgo.Robots
             }
 
             var res = ExecuteMarketOrder(type, SymbolName, units, Label, Math.Round(slPips, 1), tpPips, "ZL " + why);
+            if (res.IsSuccessful && UseLossFilter && _blockedSide.HasValue && _blockedSide.Value != type)
+            {
+                Print("Opposite trade opened -> {0} side unblocked", _blockedSide.Value);
+                _blockedSide = null;
+                _streak = 0;
+                _streakSide = null;
+            }
             if (res.IsSuccessful)
                 Print("{0} {1} {2} units | SL {3:F1} pips | TP {4} | {5}", type, SymbolName, units, slPips,
                       tpPips.HasValue ? tpPips.Value.ToString("F1") + " pips" : "none", why);
