@@ -31,7 +31,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p out
-          for proj in ZeroLagTrendBot AsianBreakoutBot EmaCrossBot; do
+          for proj in ZeroLagTrendBot AsianBreakoutBot EmaCrossBot GoldBreakoutBot; do
             find . -name "*.algo" -not -path "./out/*" -not -path "./release/*" -delete
             dotnet build $proj/$proj.csproj -c Release
             f=$(find . -name "*.algo" -not -path "./out/*" -not -path "./release/*" | head -1)
