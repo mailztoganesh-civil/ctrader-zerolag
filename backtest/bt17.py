@@ -171,7 +171,7 @@ def main():
     print(f"Data {sym}: {len(b)} bars, {datetime.fromtimestamp(b[0][0], timezone.utc).date()} -> "
           f"{datetime.fromtimestamp(b[-1][0], timezone.utc).date()}, price ~{b[-1][3]:.0f}")
     P = prep(b)
-    if os.environ.get("BT_DUMP"):
+    if os.environ.get("BT_DUMP") and not os.environ.get("BT_ALL"):
         import json
         run(P, "none", 20, "spl", 3.0, (7, 16))
         split = b[int(len(b) * 0.75)][0]
