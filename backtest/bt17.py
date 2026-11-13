@@ -194,6 +194,17 @@ def main():
     sm = sum(1 for i in range(1, len(b)) if P["SPH"][i] != P["SPH"][i-1]) + sum(1 for i in range(1, len(b)) if P["SPL"][i] != P["SPL"][i-1])
     print(f"Structural pivots marked: {sm} small, {marks} large (about {marks/ (len(b)/276):.1f} large pivots per day)")
     split = b[int(len(b) * 0.75)][0]
+    if os.environ.get("BT_ALL"):
+        import json
+        split = b[int(len(b) * 0.75)][0]
+        run(P, "none", 10, "spl", 3.0, (7, 16), "spm")
+        out = dict(split=split, t=P["t"], h=[round(x, 5) for x in P["h"]], l=[round(x, 5) for x in P["l"]],
+                   c=[round(x, 5) for x in P["c"]],
+                   s10=[round(x, 5) if x else None for x in P["s10"]], s20=[round(x, 5) if x else None for x in P["s20"]],
+                   tr=[dict(t, e=round(t["e"], 5), sl=round(t["sl"], 5), tp=round(t["tp"], 5), x=round(t["x"], 5)) for t in LOG])
+        json.dump(out, open(os.environ["BT_DUMP"], "w"))
+        print("dumped", len(LOG), "trades")
+        return
     if os.environ.get("BT_TF"):
         split = b[int(len(b) * 0.75)][0]
         print("\nTrend-confirmation filters (pullback, SPL/SPH stop, 3R, 11:00-20:00 Dubai):")
