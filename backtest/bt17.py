@@ -162,7 +162,15 @@ def fmt(s): return f"{s['n']:>4} tr | win {s['win']:4.1f}% | PF {s['pf']:4.2f} |
 
 def main():
     b = None
-    for sym in ((SYM + "=X",) if IS_FX else ("XAUUSD=X", "GC=F")):
+    if os.environ.get("BT_FILE"):
+        import gzip
+        sym = os.environ["BT_FILE"]
+        b = []
+        with gzip.open(sym, "rt") as f:
+            for line in f:
+                t, o, h, l, c = line.split(",")
+                b.append((int(t), float(h), float(l), float(c)))
+    for sym in (() if b else ((SYM + "=X",) if IS_FX else ("XAUUSD=X", "GC=F"))):
         try:
             b = fetch(sym, "5m", "60d")
             if len(b) > 5000: break
