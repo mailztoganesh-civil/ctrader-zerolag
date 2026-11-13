@@ -1,8 +1,11 @@
 // AsianBreakoutBot - Asian range breakout at London open (cTrader cBot)
-// Range: 00:00-07:00 UTC (04:00-11:00 Dubai). Entry: first M5 close beyond the
-// range between 07:00 and 12:00 UTC. One trade per day. SL at range middle
-// (or opposite side), TP = RR x risk. Everything closed at 20:00 UTC (00:00 Dubai).
-// Position size from Risk % of equity.
+// Range: 03:00-07:00 UTC (07:00-11:00 Dubai). Entry: first M5 close beyond the
+// range between 07:00 and 14:00 UTC (11:00-18:00 Dubai). One trade per day.
+// SL at range middle, TP = 3 x risk. Everything closed at 20:00 UTC (00:00 Dubai).
+// Optional Selective Reverse: if the original trade is stopped within 45 min and
+// was entered before 09:00 UTC (13:00 Dubai), and the stop-out candle closes past
+// the range middle, open ONE opposite trade: stop = original entry +/- 2.5 pips,
+// target 1.8R, risk 0.7 x normal. No reverse if the stop is hit after 10:30 UTC.
 
 using System;
 using System.Linq;
@@ -17,33 +20,33 @@ namespace cAlgo.Robots
     public class AsianBreakoutBot : Robot
     {
         // ---------------- Risk ----------------
-        [Parameter("Risk % per Trade", Group = "Risk", DefaultValue = 2.0, MinValue = 0.1, MaxValue = 10)]
+        [Parameter("Risk % per Trade", Group = "Risk", DefaultValue = 1.0, MinValue = 0.1, MaxValue = 10)]
         public double RiskPct { get; set; }
 
         [Parameter("Stop Placement", Group = "Risk", DefaultValue = StopPlacement.RangeMiddle)]
         public StopPlacement StopMode { get; set; }
 
-        [Parameter("Reward:Risk (TP)", Group = "Risk", DefaultValue = 2.0, MinValue = 0.5)]
+        [Parameter("Reward:Risk (TP)", Group = "Risk", DefaultValue = 3.0, MinValue = 0.5)]
         public double RR { get; set; }
 
         [Parameter("Use Min Lot If Risk Too Small", Group = "Risk", DefaultValue = false)]
         public bool UseMinLot { get; set; }
 
         // ---------------- Session (UTC) ----------------
-        [Parameter("Range Start Hour UTC", Group = "Session (UTC)", DefaultValue = 0, MinValue = 0, MaxValue = 23)]
+        [Parameter("Range Start Hour UTC", Group = "Session (UTC)", DefaultValue = 3, MinValue = 0, MaxValue = 23)]
         public int RangeStartHour { get; set; }
 
         [Parameter("Range End Hour UTC", Group = "Session (UTC)", DefaultValue = 7, MinValue = 1, MaxValue = 23)]
         public int RangeEndHour { get; set; }
 
-        [Parameter("Last Entry Hour UTC", Group = "Session (UTC)", DefaultValue = 12, MinValue = 1, MaxValue = 23)]
+        [Parameter("Last Entry Hour UTC", Group = "Session (UTC)", DefaultValue = 14, MinValue = 1, MaxValue = 23)]
         public int EntryEndHour { get; set; }
 
         [Parameter("Close All Hour UTC", Group = "Session (UTC)", DefaultValue = 20, MinValue = 1, MaxValue = 23)]
         public int ExitHour { get; set; }
 
         // ---------------- Filters ----------------
-        [Parameter("Min Range Pips", Group = "Filters", DefaultValue = 5, MinValue = 0)]
+        [Parameter("Min Range Pips", Group = "Filters", DefaultValue = 0, MinValue = 0)]
         public double MinRangePips { get; set; }
 
         [Parameter("Max Range Pips (0 = off)", Group = "Filters", DefaultValue = 0, MinValue = 0)]
@@ -51,6 +54,31 @@ namespace cAlgo.Robots
 
         [Parameter("Max Spread Pips (0 = off)", Group = "Filters", DefaultValue = 3, MinValue = 0)]
         public double MaxSpreadPips { get; set; }
+
+        // ---------------- Selective Reverse ----------------
+        [Parameter("Enable Selective Reverse", Group = "Selective Reverse", DefaultValue = true)]
+        public bool RevEnabled { get; set; }
+
+        [Parameter("Max Minutes Entry -> Stop", Group = "Selective Reverse", DefaultValue = 45, MinValue = 5)]
+        public int RevMaxMinutes { get; set; }
+
+        [Parameter("Original Entry Before (UTC hour)", Group = "Selective Reverse", DefaultValue = 9.0, MinValue = 0, MaxValue = 24)]
+        public double RevEntryBefore { get; set; }
+
+        [Parameter("No Reverse If Stop After (UTC hour)", Group = "Selective Reverse", DefaultValue = 10.5, MinValue = 0, MaxValue = 24)]
+        public double RevStopCutoff { get; set; }
+
+        [Parameter("Need Clean Failure (close past middle)", Group = "Selective Reverse", DefaultValue = true)]
+        public bool RevClean { get; set; }
+
+        [Parameter("Reverse Stop Beyond Entry (pips)", Group = "Selective Reverse", DefaultValue = 2.5, MinValue = 0)]
+        public double RevStopExtra { get; set; }
+
+        [Parameter("Reverse Target (R)", Group = "Selective Reverse", DefaultValue = 1.8, MinValue = 0.5)]
+        public double RevRR { get; set; }
+
+        [Parameter("Reverse Risk Factor", Group = "Selective Reverse", DefaultValue = 0.7, MinValue = 0.1, MaxValue = 1.0)]
+        public double RevRiskFactor { get; set; }
 
         [Parameter("Label", Group = "Misc", DefaultValue = "AsiaBO")]
         public string Label { get; set; }
@@ -61,18 +89,27 @@ namespace cAlgo.Robots
         private bool _tradedToday;
         private bool _skipToday;
         private double _rangeHi, _rangeLo;
+        private bool _revDone;
+        private TradeType? _revPending;     // direction waiting for the stop-out candle to close
+        private double _revOrigEntry;
+        private DateTime _revStopTime;
 
         protected override void OnStart()
         {
             if (TimeFrame != TimeFrame.Minute5)
                 Print("WARNING: run this bot on a 5-minute (m5) chart. Current timeframe: {0}", TimeFrame);
 
+            Print("Selective reverse: {0}", RevEnabled ? string.Format("ON (<= {0} min, entry before {1} UTC, {2}R, {3}x risk)", RevMaxMinutes, RevEntryBefore, RevRR, RevRiskFactor) : "OFF");
             Print("AsianBreakoutBot started on {0} {1}. Risk {2}%, stop {3}, TP {4}R. Range {5:00}:00-{6:00}:00 UTC, entries until {7:00}:00, close all {8:00}:00 UTC.",
                 SymbolName, TimeFrame, RiskPct, StopMode, RR, RangeStartHour, RangeEndHour, EntryEndHour, ExitHour);
 
+            Positions.Closed += OnPositionClosed;
             ResetDay(Server.Time.Date);
             // after a restart: don't trade twice on the same day
             if (TradedToday()) { _tradedToday = true; Print("Already traded today -> no new entry today."); }
+            foreach (var t in History)
+                if (t.Label == Label + "_R" && t.EntryTime.Date == Server.Time.Date) _revDone = true;
+            if (Positions.FindAll(Label + "_R", SymbolName).Any()) _revDone = true;
         }
 
         private void ResetDay(DateTime day)
@@ -82,7 +119,54 @@ namespace cAlgo.Robots
             _tradedToday = false;
             _skipToday = false;
             _rangeHi = _rangeLo = 0;
+            _revDone = false;
+            _revPending = null;
         }
+
+        // ---------- selective reverse ----------
+        private void OnPositionClosed(PositionClosedEventArgs args)
+        {
+            var p = args.Position;
+            if (!RevEnabled || _revDone || p.Label != Label || p.SymbolName != SymbolName) return;
+            if (args.Reason != PositionCloseReason.StopLoss) return;
+            DateTime now = Server.Time;
+            if (p.EntryTime.Date != now.Date || !_rangeReady) return;
+            double mins = (now - p.EntryTime).TotalMinutes;
+            double entryH = p.EntryTime.TimeOfDay.TotalHours, stopH = now.TimeOfDay.TotalHours;
+            if (mins > RevMaxMinutes) { Print("No reverse: stop hit after {0:F0} min (> {1}).", mins, RevMaxMinutes); return; }
+            if (entryH >= RevEntryBefore) { Print("No reverse: original entry too late."); return; }
+            if (stopH >= RevStopCutoff) { Print("No reverse: stop hit after cutoff."); return; }
+            _revDone = true;   // only one chance per day
+            var dir = p.TradeType == TradeType.Buy ? TradeType.Sell : TradeType.Buy;
+            _revOrigEntry = p.EntryPrice;
+            _revStopTime = now;
+            if (RevClean) { _revPending = dir; Print("Fast failure -> waiting for this candle to close past the middle."); }
+            else EnterReverse(dir);
+        }
+
+        private void EnterReverse(TradeType dir)
+        {
+            if (now_hour() >= ExitHour) return;
+            bool buy = dir == TradeType.Buy;
+            double entry = buy ? Symbol.Ask : Symbol.Bid;
+            double stop = buy ? _revOrigEntry - RevStopExtra * Symbol.PipSize : _revOrigEntry + RevStopExtra * Symbol.PipSize;
+            if ((buy && stop >= entry) || (!buy && stop <= entry)) { Print("Reverse skipped: price already past the reverse stop."); return; }
+            double slPips = Math.Abs(entry - stop) / Symbol.PipSize;
+            if (slPips < 3) { Print("Reverse skipped: stop only {0:F1} pips.", slPips); return; }
+            double riskMoney = Account.Equity * RiskPct * RevRiskFactor / 100.0;
+            double units = Symbol.NormalizeVolumeInUnits(riskMoney / (slPips * Symbol.PipValue), RoundingMode.Down);
+            if (units < Symbol.VolumeInUnitsMin)
+            {
+                if (!UseMinLot) { Print("Reverse skipped: risk below minimum lot."); return; }
+                units = Symbol.VolumeInUnitsMin;
+            }
+            var res = ExecuteMarketOrder(dir, SymbolName, units, Label + "_R", Math.Round(slPips, 1), Math.Round(slPips * RevRR, 1), "Selective reverse");
+            if (res.IsSuccessful)
+                Print("REVERSE {0} {1} lots | SL {2:F1} pips | TP {3:F1} pips", dir, Symbol.VolumeInUnitsToQuantity(units), slPips, slPips * RevRR);
+            else Print("Reverse order failed: {0}", res.Error);
+        }
+
+        private int now_hour() { return Server.Time.Hour; }
 
         private bool TradedToday()
         {
@@ -106,13 +190,23 @@ namespace cAlgo.Robots
             // 1) time exit
             if (now.Hour >= ExitHour)
             {
-                foreach (var p in Positions.FindAll(Label, SymbolName))
+                foreach (var p in Positions.FindAll(Label, SymbolName).Concat(Positions.FindAll(Label + "_R", SymbolName)).ToArray())
                 {
                     var r = ClosePosition(p);
                     if (r.IsSuccessful) Print("Time exit: closed {0}, net {1:F2}", p.TradeType, p.NetProfit);
                     else Print("Time exit failed: {0}", r.Error);
                 }
                 return;
+            }
+
+            // pending reverse: check the candle that hit the original stop
+            if (_revPending != null && barClose > _revStopTime)
+            {
+                var dir = _revPending.Value; _revPending = null;
+                double mid = (_rangeHi + _rangeLo) / 2.0, c = Bars.ClosePrices[last];
+                bool clean = dir == TradeType.Sell ? c < mid : c > mid;
+                if (clean) EnterReverse(dir);
+                else Print("No reverse: stop-out candle closed back on the original side (not a clean failure).");
             }
 
             if (_tradedToday || _skipToday) return;
