@@ -7,6 +7,8 @@ on:
         default: EURUSD
       days:
         default: '730'
+      merge:
+        default: ''
 
 permissions:
   contents: write
@@ -18,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Download
-        run: DUKA_SYM=${{ github.event.inputs.sym }} DUKA_DAYS=${{ github.event.inputs.days }} DUKA_OUT=backtest/data/${{ github.event.inputs.sym }}_m5_${{ github.event.inputs.days }}d.csv.gz python3 backtest/duka.py
+        run: DUKA_MERGE=${{ github.event.inputs.merge }} DUKA_WORKERS=6 DUKA_TRIES=8 DUKA_SYM=${{ github.event.inputs.sym }} DUKA_DAYS=${{ github.event.inputs.days }} DUKA_OUT=backtest/data/${{ github.event.inputs.sym }}_m5_${{ github.event.inputs.days }}d.csv.gz python3 backtest/duka.py
       - name: Commit
         run: |
           git config user.name "github-actions"

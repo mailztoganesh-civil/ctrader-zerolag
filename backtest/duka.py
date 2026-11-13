@@ -18,7 +18,7 @@ SCALE = 1e3 if "JPY" in SYM or SYM.startswith("XAU") else 1e5
 
 def day(d):
     url = f"https://datafeed.dukascopy.com/datafeed/{SYM}/{d.year}/{d.month - 1:02d}/{d.day:02d}/BID_candles_min_1.bi5"
-    for k in range(4):
+    for k in range(int(os.environ.get("DUKA_TRIES", "4"))):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=40) as r:
@@ -45,7 +45,15 @@ def main():
     end = datetime.now(timezone.utc).date() - timedelta(days=1)
     dates = [end - timedelta(days=k) for k in range(DAYS) if (end - timedelta(days=k)).weekday() != 5]
     m5, ok, fail = {}, 0, 0
-    with ThreadPoolExecutor(max_workers=24) as ex:
+    if os.environ.get("DUKA_MERGE") and os.path.exists(OUT):
+        have = set()
+        for line in gzip.open(OUT, "rt"):
+            t, o, h, l, c = line.split(",")
+            m5[int(t)] = [float(o), float(h), float(l), float(c)]
+            have.add(datetime.fromtimestamp(int(t), timezone.utc).date())
+        dates = [d for d in dates if d not in have and d.weekday() < 5]
+        print(f"merge mode: {len(have)} days already, {len(dates)} to fetch", flush=True)
+    with ThreadPoolExecutor(max_workers=int(os.environ.get("DUKA_WORKERS", "24"))) as ex:
         for k, (d, rows) in enumerate(ex.map(day, dates)):
             if rows is None:
                 fail += 1; continue
