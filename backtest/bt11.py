@@ -18,7 +18,7 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from itertools import product
 
-DATA = os.path.join(os.path.dirname(__file__), "data", "eurusd_m5.csv.gz")
+DATA = os.environ.get("BT_FILE") or os.path.join(os.path.dirname(__file__), "data", "eurusd_m5.csv.gz")
 PIP = 0.01 if "JPY" in os.environ.get("BT_SYM", "") else 0.0001
 COST = float(os.environ.get("BT_COST", "0.9"))
 
@@ -243,7 +243,7 @@ def main():
     bars = load()
     ctx = Ctx(bars)
     t0, t1 = ctx.t[0], ctx.t[-1]
-    split = t0 + int((t1 - t0) * 0.75)
+    split = t0 + int((t1 - t0) * float(os.environ.get("BT_SPLIT", "0.75")))
     print(f"EURUSD M5 {datetime.fromtimestamp(t0, timezone.utc).date()} -> {datetime.fromtimestamp(t1, timezone.utc).date()}, "
           f"{len(bars)} bars. Fit until {datetime.fromtimestamp(split, timezone.utc).date()}, then out-of-sample.")
 
@@ -262,7 +262,7 @@ def main():
             res = fn(ctx, *p)
             ins = [r for t, r in res if t < split]; oos = [r for t, r in res if t >= split]
             rows.append((p, st(ins), st(oos)))
-        ok = [r for r in rows if r[1]["n"] >= 60]
+        ok = [r for r in rows if r[1]["n"] >= int(os.environ.get("BT_MINN", "60"))]
         ok.sort(key=lambda r: -r[1]["pf"])
         print(f"\n=== {fam}: {len(rows)} combos tested ({time.time() - t_start:.0f}s); top 5 by in-sample PF ===")
         for p, a, b in ok[:5]:

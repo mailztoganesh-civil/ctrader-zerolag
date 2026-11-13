@@ -213,6 +213,30 @@ def main():
         json.dump(out, open(os.environ["BT_DUMP"], "w"))
         print("dumped", len(LOG), "trades")
         return
+    if os.environ.get("BT_GRID"):
+        import time as _t
+        split = b[int(len(b) * float(os.environ.get("BT_SPLIT", "0.67")))][0]
+        print("Fit until", datetime.fromtimestamp(split, timezone.utc).date())
+        S2 = {"all day": (0, 24), "11-20 Dubai": (7, 16), "16-21 Dubai": (12, 17)}
+        rows = []; t0 = _t.time()
+        for zone, touch, k, rr, sn, tf in product(("none", "outside"), (10, 20), (1.5, 2.0, 3.0, "spl"), (1.0, 1.5, 2.0, 3.0), S2, ("none", "spm", "gap")):
+            res = run(P, zone, touch, k, rr, S2[sn], tf)
+            a = st([r for t, r in res if t < split]); z = st([r for t, r in res if t >= split])
+            rows.append(((zone, touch, k, rr, sn, tf), a, z))
+        print(f"{len(rows)} combos in {_t.time()-t0:.0f}s")
+        ok = sorted([r for r in rows if r[1]["n"] >= 150], key=lambda r: -r[1]["pf"])
+        print("Top 10 fits (zone, touch, stop, RR, session, trend filter):")
+        for p_, a, z in ok[:10]:
+            print(f"  {str(p_):<58} FIT {fmt(a)} || NEW {fmt(z)}")
+        top = ok[:max(1, len(ok) // 10)]
+        print(f"Top 10% of fits on new data: avg PF {sum(z['pf'] for _, _, z in top)/len(top):.2f}, "
+              f"{100*sum(1 for _, _, z in top if z['net'] > 0)/len(top):.0f}% profitable")
+        both = sorted([r for r in rows if r[1]["n"] >= 150 and r[2]["n"] >= 60 and r[1]["pf"] > 1.1 and r[2]["pf"] > 1.1],
+                      key=lambda r: -min(r[1]["pf"], r[2]["pf"]))
+        print(f"PF > 1.1 in BOTH periods: {len(both)} of {len(rows)}")
+        for p_, a, z in both[:10]:
+            print(f"  {str(p_):<58} FIT {fmt(a)} || NEW {fmt(z)}")
+        return
     if os.environ.get("BT_TF"):
         split = b[int(len(b) * 0.75)][0]
         print("\nTrend-confirmation filters (pullback, SPL/SPH stop, 3R, 11:00-20:00 Dubai):")
