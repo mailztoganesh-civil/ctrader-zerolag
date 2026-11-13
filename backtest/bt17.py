@@ -53,6 +53,7 @@ def prep(b):
     h_, l_ = [x[1] for x in b], [x[2] for x in b]
     n = len(b)
     LPH = [None] * n; LPL = [None] * n; SPH = [None] * n; SPL = [None] * n
+    EV = []  # (mark_bar, anchor_bar, kind, price)
     look = "sph"; anc = 0; cnt = 0
     last_sph = last_spl = None
     lp_look = "lph"; lp_ext_i = 0; last_lph = last_lpl = None
@@ -63,43 +64,51 @@ def prep(b):
             elif l_[i] < l_[anc] and c[i] < c[anc]:
                 cnt += 1
                 if cnt == 2:
-                    last_sph = h_[anc]; look = "spl"
+                    last_sph = h_[anc]; look = "spl"; EV.append((i, anc, "SPH", h_[anc]))
                     anc = min(range(anc, i + 1), key=lambda k: l_[k]); cnt = 0
         else:
             if l_[i] <= l_[anc]: anc, cnt = i, 0
             elif h_[i] > h_[anc] and c[i] > c[anc]:
                 cnt += 1
                 if cnt == 2:
-                    last_spl = l_[anc]; look = "sph"
+                    last_spl = l_[anc]; look = "sph"; EV.append((i, anc, "SPL", l_[anc]))
                     anc = max(range(anc, i + 1), key=lambda k: h_[k]); cnt = 0
         # large pivots
         if lp_look == "lph":
             if h_[i] >= h_[lp_ext_i]: lp_ext_i = i
             if last_spl is not None and l_[i] < last_spl:
-                last_lph = h_[lp_ext_i]; lp_look = "lpl"; lp_ext_i = i
+                last_lph = h_[lp_ext_i]; EV.append((i, lp_ext_i, "LPH", h_[lp_ext_i])); lp_look = "lpl"; lp_ext_i = i
         else:
             if l_[i] <= l_[lp_ext_i]: lp_ext_i = i
             if last_sph is not None and h_[i] > last_sph:
-                last_lpl = l_[lp_ext_i]; lp_look = "lph"; lp_ext_i = i
+                last_lpl = l_[lp_ext_i]; EV.append((i, lp_ext_i, "LPL", l_[lp_ext_i])); lp_look = "lph"; lp_ext_i = i
         LPH[i], LPL[i], SPH[i], SPL[i] = last_lph, last_lpl, last_sph, last_spl
     info = [(datetime.fromtimestamp(t, timezone.utc).date(),
              datetime.fromtimestamp(t, timezone.utc).hour) for t, *_ in b]
     return dict(c=c, h=[x[1] for x in b], l=[x[2] for x in b], s10=sma(c, 10), s20=sma(c, 20),
-                atr=atr(b), piv=piv, info=info, t=[x[0] for x in b], LPH=LPH, LPL=LPL, SPH=SPH, SPL=SPL)
+                atr=atr(b), piv=piv, info=info, t=[x[0] for x in b], LPH=LPH, LPL=LPL, SPH=SPH, SPL=SPL, EV=EV)
+
+
+LOG = []
 
 
 def run(P, zone, touch, k, rr, sess):
+    LOG.clear()
     c, h, l, s10, s20, at = P["c"], P["h"], P["l"], P["s10"], P["s20"], P["atr"]
     st = s10 if touch == 10 else s20
     out, pos = [], None
     for i in range(25, len(c)):
         d, hr = P["info"][i]
         if pos:
-            dr, e, sl, tp, risk = pos; x = None
+            dr, e, sl, tp, risk, _ = pos; x = None
             if (dr == 1 and l[i] <= sl) or (dr == -1 and h[i] >= sl): x = sl
             elif (dr == 1 and h[i] >= tp) or (dr == -1 and l[i] <= tp): x = tp
             elif hr >= 20: x = c[i]
-            if x is not None: out.append((P["t"][i], ((x - e) * dr - COST) / risk)); pos = None
+            if x is not None:
+                out.append((P["t"][i], ((x - e) * dr - COST) / risk))
+                LOG.append(dict(ie=pos[5], ix=i, d=dr, e=e, sl=sl, tp=tp, x=x, r=round(((x - e) * dr - COST) / risk, 2),
+                                why="TP" if x == tp else ("SL" if x == sl else "Time")))
+                pos = None
             continue
         if not (sess[0] <= hr < sess[1]): continue
         lph, lpl = P["LPH"][i], P["LPL"][i]
@@ -118,7 +127,7 @@ def run(P, zone, touch, k, rr, sess):
         else:
             risk = k * at[i]
         if risk <= 0: continue
-        pos = (dr, c[i], c[i] - dr * risk, c[i] + dr * risk * rr, risk)
+        pos = (dr, c[i], c[i] - dr * risk, c[i] + dr * risk * rr, risk, i)
     return out
 
 
@@ -144,6 +153,25 @@ def main():
     print(f"Data {sym}: {len(b)} bars, {datetime.fromtimestamp(b[0][0], timezone.utc).date()} -> "
           f"{datetime.fromtimestamp(b[-1][0], timezone.utc).date()}, price ~{b[-1][3]:.0f}")
     P = prep(b)
+    if os.environ.get("BT_DUMP"):
+        import json
+        run(P, "none", 20, "spl", 3.0, (7, 16))
+        split = b[int(len(b) * 0.75)][0]
+        days = {}
+        for t in LOG:
+            if P["t"][t["ie"]] >= split:
+                days.setdefault(P["info"][t["ie"]][0], []).append(t)
+        best = max(days.items(), key=lambda kv: (any(x["r"] < 0 for x in kv[1]) and any(x["r"] > 0 for x in kv[1]), sum(x["r"] for x in kv[1])))
+        d, tr = best
+        idx = [i for i in range(len(b)) if P["info"][i][0] == d and 3 <= P["info"][i][1] < 21]
+        a, z = idx[0], idx[-1] + 1
+        ev = [(e[1] - a, e[2], e[3]) for e in P["EV"] if a <= e[0] < z and e[1] >= a]
+        out = dict(day=str(d), t0=P["t"][a], h=P["h"][a:z], l=P["l"][a:z], c=P["c"][a:z],
+                   s10=P["s10"][a:z], s20=P["s20"][a:z], ev=ev,
+                   tr=[dict(t, ie=t["ie"] - a, ix=t["ix"] - a) for t in tr])
+        json.dump(out, open(os.environ["BT_DUMP"], "w"))
+        print("dumped", d, len(tr), "trades", [x["r"] for x in tr])
+        return
     marks = sum(1 for i in range(1, len(b)) if P["LPH"][i] != P["LPH"][i-1]) + sum(1 for i in range(1, len(b)) if P["LPL"][i] != P["LPL"][i-1])
     sm = sum(1 for i in range(1, len(b)) if P["SPH"][i] != P["SPH"][i-1]) + sum(1 for i in range(1, len(b)) if P["SPL"][i] != P["SPL"][i-1])
     print(f"Structural pivots marked: {sm} small, {marks} large (about {marks/ (len(b)/276):.1f} large pivots per day)")
