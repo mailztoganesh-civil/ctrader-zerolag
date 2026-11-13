@@ -14,6 +14,7 @@ using System;
 using System.Linq;
 using cAlgo.API;
 using cAlgo.API.Internals;
+using cAlgo.API.Indicators;
 
 namespace cAlgo.Robots
 {
