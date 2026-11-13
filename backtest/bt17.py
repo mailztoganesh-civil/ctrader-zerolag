@@ -15,7 +15,10 @@ from itertools import product
 sys.path.insert(0, os.path.dirname(__file__))
 from bt2 import fetch  # noqa: E402
 
-COST = 0.25
+SYM = os.environ.get("BT_SYM", "")
+IS_FX = SYM not in ("", "XAUUSD")
+COST = 0.00009 if IS_FX else 0.25
+BUF = 0.00003 if IS_FX else 0.3
 
 
 def sma(v, n):
@@ -110,7 +113,7 @@ def run(P, zone, touch, k, rr, sess):
         if k == "spl":
             ref = P["SPL"][i] if dr == 1 else P["SPH"][i]
             if ref is None: continue
-            risk = (c[i] - ref) * dr + 0.3
+            risk = (c[i] - ref) * dr + BUF
             if risk < 0.5 * at[i] or risk > 6 * at[i]: continue
         else:
             risk = k * at[i]
@@ -132,7 +135,7 @@ def fmt(s): return f"{s['n']:>4} tr | win {s['win']:4.1f}% | PF {s['pf']:4.2f} |
 
 def main():
     b = None
-    for sym in ("XAUUSD=X", "GC=F"):
+    for sym in ((SYM + "=X",) if IS_FX else ("XAUUSD=X", "GC=F")):
         try:
             b = fetch(sym, "5m", "60d")
             if len(b) > 5000: break
