@@ -53,6 +53,8 @@ def prep(b):
     h_, l_ = [x[1] for x in b], [x[2] for x in b]
     n = len(b)
     LPH = [None] * n; LPL = [None] * n; SPH = [None] * n; SPL = [None] * n
+    PSPH = [None] * n; PSPL = [None] * n
+    prev_sph = prev_spl = None
     EV = []  # (mark_bar, anchor_bar, kind, price)
     look = "sph"; anc = 0; cnt = 0
     last_sph = last_spl = None
@@ -64,14 +66,14 @@ def prep(b):
             elif l_[i] < l_[anc] and c[i] < c[anc]:
                 cnt += 1
                 if cnt == 2:
-                    last_sph = h_[anc]; look = "spl"; EV.append((i, anc, "SPH", h_[anc]))
+                    prev_sph = last_sph; last_sph = h_[anc]; look = "spl"; EV.append((i, anc, "SPH", h_[anc]))
                     anc = min(range(anc, i + 1), key=lambda k: l_[k]); cnt = 0
         else:
             if l_[i] <= l_[anc]: anc, cnt = i, 0
             elif h_[i] > h_[anc] and c[i] > c[anc]:
                 cnt += 1
                 if cnt == 2:
-                    last_spl = l_[anc]; look = "sph"; EV.append((i, anc, "SPL", l_[anc]))
+                    prev_spl = last_spl; last_spl = l_[anc]; look = "sph"; EV.append((i, anc, "SPL", l_[anc]))
                     anc = max(range(anc, i + 1), key=lambda k: h_[k]); cnt = 0
         # large pivots
         if lp_look == "lph":
@@ -83,16 +85,32 @@ def prep(b):
             if last_sph is not None and h_[i] > last_sph:
                 last_lpl = l_[lp_ext_i]; EV.append((i, lp_ext_i, "LPL", l_[lp_ext_i])); lp_look = "lph"; lp_ext_i = i
         LPH[i], LPL[i], SPH[i], SPL[i] = last_lph, last_lpl, last_sph, last_spl
+        PSPH[i], PSPL[i] = prev_sph, prev_spl
     info = [(datetime.fromtimestamp(t, timezone.utc).date(),
              datetime.fromtimestamp(t, timezone.utc).hour) for t, *_ in b]
     return dict(c=c, h=[x[1] for x in b], l=[x[2] for x in b], s10=sma(c, 10), s20=sma(c, 20),
-                atr=atr(b), piv=piv, info=info, t=[x[0] for x in b], LPH=LPH, LPL=LPL, SPH=SPH, SPL=SPL, EV=EV)
+                atr=atr(b), piv=piv, info=info, t=[x[0] for x in b], LPH=LPH, LPL=LPL, SPH=SPH, SPL=SPL, EV=EV, PSPH=PSPH, PSPL=PSPL)
 
 
 LOG = []
 
 
-def run(P, zone, touch, k, rr, sess):
+def trend_ok(P, i, dr, tf):
+    if tf == "none": return True
+    s10, s20, at = P["s10"], P["s20"], P["atr"]
+    if tf == "slope": return (s20[i] - s20[i - 12]) * dr > 0
+    if tf == "gap": return (s10[i] - s20[i]) * dr > 0.3 * at[i]
+    if tf == "spm":
+        a, b_, c_, d_ = P["SPH"][i], P["PSPH"][i], P["SPL"][i], P["PSPL"][i]
+        if None in (a, b_, c_, d_): return False
+        return (a > b_ and c_ > d_) if dr == 1 else (a < b_ and c_ < d_)
+    if tf == "lp":
+        x = P["LPH"][i] if dr == 1 else P["LPL"][i]
+        return x is not None and (P["c"][i] - x) * dr > 0
+    return True
+
+
+def run(P, zone, touch, k, rr, sess, tf="none"):
     LOG.clear()
     c, h, l, s10, s20, at = P["c"], P["h"], P["l"], P["s10"], P["s20"], P["atr"]
     st = s10 if touch == 10 else s20
@@ -118,7 +136,7 @@ def run(P, zone, touch, k, rr, sess):
         dr = 0
         if s10[i] > s20[i] and l[i] <= st[i] and c[i] > s10[i] and up_ok: dr = 1
         elif s10[i] < s20[i] and h[i] >= st[i] and c[i] < s10[i] and dn_ok: dr = -1
-        if not dr: continue
+        if not dr or not trend_ok(P, i, dr, tf): continue
         if k == "spl":
             ref = P["SPL"][i] if dr == 1 else P["SPH"][i]
             if ref is None: continue
@@ -176,6 +194,16 @@ def main():
     sm = sum(1 for i in range(1, len(b)) if P["SPH"][i] != P["SPH"][i-1]) + sum(1 for i in range(1, len(b)) if P["SPL"][i] != P["SPL"][i-1])
     print(f"Structural pivots marked: {sm} small, {marks} large (about {marks/ (len(b)/276):.1f} large pivots per day)")
     split = b[int(len(b) * 0.75)][0]
+    if os.environ.get("BT_TF"):
+        split = b[int(len(b) * 0.75)][0]
+        print("\nTrend-confirmation filters (pullback, SPL/SPH stop, 3R, 11:00-20:00 Dubai):")
+        for touch in (20, 10):
+            for tf, nm in (("none", "no filter (current)"), ("slope", "SMA20 rising/falling"), ("gap", "SMA gap > 0.3 ATR"),
+                           ("spm", "higher SPH+SPL (PDF)"), ("lp", "price beyond last LPH/LPL")):
+                res = run(P, "none", touch, "spl", 3.0, (7, 16), tf)
+                a = st([r for t, r in res if t < split]); z = st([r for t, r in res if t >= split])
+                print(f"  SMA{touch} touch | {nm:<26} ALL {fmt(st([r for t, r in res]))} || FIT {fmt(a)} || NEW {fmt(z)}")
+        return
     S = {"all day": (0, 24), "London+NY 07-16 UTC": (7, 16), "NY 12-17 UTC": (12, 17)}
     rows = []
     for zone, touch, k, rr, sn in product(("none", "outside", "inside"), (10, 20), (1.0, 1.5, 2.0, 3.0, "spl"), (1.0, 1.5, 2.0, 3.0), S):
