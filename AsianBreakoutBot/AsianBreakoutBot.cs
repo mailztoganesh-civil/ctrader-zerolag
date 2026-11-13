@@ -5,7 +5,7 @@
 // Optional Selective Reverse: if the original trade is stopped within 45 min and
 // was entered before 09:00 UTC (13:00 Dubai), and the stop-out candle closes past
 // the range middle, open ONE opposite trade: stop = original entry +/- 2.5 pips,
-// target 1.8R, risk 0.7 x normal. No reverse if the stop is hit after 10:30 UTC.
+// target 1.5R, risk 0.7 x normal. No reverse if the stop is hit after 10:30 UTC.
 
 using System;
 using System.Linq;
@@ -74,7 +74,7 @@ namespace cAlgo.Robots
         [Parameter("Reverse Stop Beyond Entry (pips)", Group = "Selective Reverse", DefaultValue = 2.5, MinValue = 0)]
         public double RevStopExtra { get; set; }
 
-        [Parameter("Reverse Target (R)", Group = "Selective Reverse", DefaultValue = 1.8, MinValue = 0.5)]
+        [Parameter("Reverse Target (R)", Group = "Selective Reverse", DefaultValue = 1.5, MinValue = 0.5)]
         public double RevRR { get; set; }
 
         [Parameter("Reverse Risk Factor", Group = "Selective Reverse", DefaultValue = 0.7, MinValue = 0.1, MaxValue = 1.0)]
