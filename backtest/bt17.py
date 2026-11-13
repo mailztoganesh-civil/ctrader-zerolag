@@ -222,6 +222,17 @@ def main():
                 res = run(P, "none", touch, "spl", 3.0, (7, 16), tf)
                 a = st([r for t, r in res if t < split]); z = st([r for t, r in res if t >= split])
                 print(f"  SMA{touch} touch | {nm:<26} ALL {fmt(st([r for t, r in res]))} || FIT {fmt(a)} || NEW {fmt(z)}")
+        res = run(P, "none", 10, "spl", 3.0, (7, 16), "spm")
+        q = {}
+        for t, r in res:
+            dt = datetime.fromtimestamp(t, timezone.utc); q.setdefault(f"{dt.year} Q{(dt.month-1)//3+1}", []).append(r)
+        print("\nChosen setup (SMA10 touch + higher SPH/SPL, structural stop, 3R) by quarter:")
+        for k in sorted(q): print(f"  {k}  {fmt(st(q[k]))}")
+        mo = {}
+        for t, r in res:
+            dt = datetime.fromtimestamp(t, timezone.utc); mo.setdefault(f"{dt.year}-{dt.month:02d}", []).append(r)
+        print("MONTHS " + " ".join(f"{k}:{sum(v):+.1f}" for k, v in sorted(mo.items())))
+        print(f"Positive months: {sum(1 for v in mo.values() if sum(v) > 0)} of {len(mo)}")
         return
     S = {"all day": (0, 24), "London+NY 07-16 UTC": (7, 16), "NY 12-17 UTC": (12, 17)}
     rows = []
