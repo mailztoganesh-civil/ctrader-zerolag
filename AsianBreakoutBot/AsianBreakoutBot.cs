@@ -20,7 +20,7 @@ namespace cAlgo.Robots
     public class AsianBreakoutBot : Robot
     {
         // ---------------- Risk ----------------
-        [Parameter("Risk % per Trade", Group = "Risk", DefaultValue = 1.0, MinValue = 0.1, MaxValue = 10)]
+        [Parameter("Risk % per Trade", Group = "Risk", DefaultValue = 2.0, MinValue = 0.1, MaxValue = 10)]
         public double RiskPct { get; set; }
 
         [Parameter("Stop Placement", Group = "Risk", DefaultValue = StopPlacement.RangeMiddle)]
@@ -29,7 +29,7 @@ namespace cAlgo.Robots
         [Parameter("Reward:Risk (TP)", Group = "Risk", DefaultValue = 3.0, MinValue = 0.5)]
         public double RR { get; set; }
 
-        [Parameter("Use Min Lot If Risk Too Small", Group = "Risk", DefaultValue = false)]
+        [Parameter("Use Min Lot If Risk Too Small", Group = "Risk", DefaultValue = true)]
         public bool UseMinLot { get; set; }
 
         // ---------------- Session (UTC) ----------------
@@ -56,7 +56,7 @@ namespace cAlgo.Robots
         public double MaxSpreadPips { get; set; }
 
         // ---------------- Selective Reverse ----------------
-        [Parameter("Enable Selective Reverse", Group = "Selective Reverse", DefaultValue = true)]
+        [Parameter("Enable Selective Reverse", Group = "Selective Reverse", DefaultValue = false)]
         public bool RevEnabled { get; set; }
 
         [Parameter("Max Minutes Entry -> Stop", Group = "Selective Reverse", DefaultValue = 45, MinValue = 5)]
@@ -79,6 +79,9 @@ namespace cAlgo.Robots
 
         [Parameter("Reverse Risk Factor", Group = "Selective Reverse", DefaultValue = 0.7, MinValue = 0.1, MaxValue = 1.0)]
         public double RevRiskFactor { get; set; }
+
+        [Parameter("Stop Bot If Equity Below (0 = off)", Group = "Risk", DefaultValue = 85, MinValue = 0)]
+        public double EquityStop { get; set; }
 
         [Parameter("Label", Group = "Misc", DefaultValue = "AsiaBO")]
         public string Label { get; set; }
@@ -108,7 +111,7 @@ namespace cAlgo.Robots
             // after a restart: don't trade twice on the same day
             if (TradedToday()) { _tradedToday = true; Print("Already traded today -> no new entry today."); }
             foreach (var t in History)
-                if (t.Label == Label + "_R" && t.EntryTime.Date == Server.Time.Date) _revDone = true;
+                if (t.Label == Label + "_R" && t.SymbolName == SymbolName && t.EntryTime.Date == Server.Time.Date) _revDone = true;
             if (Positions.FindAll(Label + "_R", SymbolName).Any()) _revDone = true;
         }
 
@@ -130,6 +133,14 @@ namespace cAlgo.Robots
             if (!RevEnabled || _revDone || p.Label != Label || p.SymbolName != SymbolName) return;
             if (args.Reason != PositionCloseReason.StopLoss) return;
             DateTime now = Server.Time;
+            if (EquityStop > 0 && Account.Equity < EquityStop)
+            {
+                foreach (var p in Positions.FindAll(Label, SymbolName).Concat(Positions.FindAll(Label + "_R", SymbolName)).ToArray())
+                    ClosePosition(p);
+                Print("Equity {0:F2} below {1} -> bot stopped.", Account.Equity, EquityStop);
+                Stop();
+                return;
+            }
             if (p.EntryTime.Date != now.Date || !_rangeReady) return;
             double mins = (now - p.EntryTime).TotalMinutes;
             double entryH = p.EntryTime.TimeOfDay.TotalHours, stopH = now.TimeOfDay.TotalHours;
