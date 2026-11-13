@@ -133,14 +133,6 @@ namespace cAlgo.Robots
             if (!RevEnabled || _revDone || p.Label != Label || p.SymbolName != SymbolName) return;
             if (args.Reason != PositionCloseReason.StopLoss) return;
             DateTime now = Server.Time;
-            if (EquityStop > 0 && Account.Equity < EquityStop)
-            {
-                foreach (var p in Positions.FindAll(Label, SymbolName).Concat(Positions.FindAll(Label + "_R", SymbolName)).ToArray())
-                    ClosePosition(p);
-                Print("Equity {0:F2} below {1} -> bot stopped.", Account.Equity, EquityStop);
-                Stop();
-                return;
-            }
             if (p.EntryTime.Date != now.Date || !_rangeReady) return;
             double mins = (now - p.EntryTime).TotalMinutes;
             double entryH = p.EntryTime.TimeOfDay.TotalHours, stopH = now.TimeOfDay.TotalHours;
@@ -192,6 +184,14 @@ namespace cAlgo.Robots
         {
             int last = Bars.Count - 2;                 // last CLOSED bar
             if (last < 1) return;
+            if (EquityStop > 0 && Account.Equity < EquityStop)
+            {
+                foreach (var q in Positions.FindAll(Label, SymbolName).Concat(Positions.FindAll(Label + "_R", SymbolName)).ToArray())
+                    ClosePosition(q);
+                Print("Equity {0:F2} below {1} -> bot stopped.", Account.Equity, EquityStop);
+                Stop();
+                return;
+            }
             DateTime barOpen = Bars.OpenTimes[last];
             DateTime barClose = barOpen.AddMinutes(5);
             DateTime now = Server.Time;
