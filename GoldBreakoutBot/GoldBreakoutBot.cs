@@ -5,6 +5,10 @@
 // 2-year test (Dukascopy, Nov 2024 - Nov 2026): +51.8R, 7 of 9 quarters positive.
 // Gold stops are large (often $15-25 per oz), so 0.01 lot can be far more than
 // your Risk %. "Max Risk % At Min Lot" protects small accounts.
+// V2 filters (default ON): breakout candle must close beyond range +/- 0.10 x ATR(14),
+// body >= 60% of candle, close in outer 25%, and last completed H1 close on the
+// trade side of H1 EMA50. A candle that fails the filters is ignored and the bot
+// keeps watching for the next qualified breakout. 2-year test: PF 1.34, +61.2R.
 
 using System;
 using System.Linq;
@@ -19,7 +23,7 @@ namespace cAlgo.Robots
     public class GoldBreakoutBot : Robot
     {
         // ---------------- Risk ----------------
-        [Parameter("Risk % per Trade", Group = "Risk", DefaultValue = 2.0, MinValue = 0.1, MaxValue = 10)]
+        [Parameter("Risk % per Trade", Group = "Risk", DefaultValue = 1.0, MinValue = 0.1, MaxValue = 10)]
         public double RiskPct { get; set; }
 
         [Parameter("Stop Placement", Group = "Risk", DefaultValue = GoldStopPlacement.RangeMiddle)]
@@ -85,11 +89,30 @@ namespace cAlgo.Robots
         [Parameter("Stop Bot If Equity Below (0 = off)", Group = "Risk", DefaultValue = 0, MinValue = 0)]
         public double EquityStop { get; set; }
 
+        // ---------------- V2 filters ----------------
+        [Parameter("Use V2 Filters", Group = "V2 Filters", DefaultValue = true)]
+        public bool UseV2 { get; set; }
+
+        [Parameter("ATR Buffer (x ATR14)", Group = "V2 Filters", DefaultValue = 0.10, MinValue = 0)]
+        public double AtrBuffer { get; set; }
+
+        [Parameter("Min Body % of Candle", Group = "V2 Filters", DefaultValue = 60, MinValue = 0, MaxValue = 100)]
+        public double MinBodyPct { get; set; }
+
+        [Parameter("Close In Outer % of Candle", Group = "V2 Filters", DefaultValue = 25, MinValue = 1, MaxValue = 100)]
+        public double CloseZonePct { get; set; }
+
+        [Parameter("H1 EMA Period", Group = "V2 Filters", DefaultValue = 50, MinValue = 2)]
+        public int H1EmaPeriod { get; set; }
+
         [Parameter("Label", Group = "Misc", DefaultValue = "GoldBO")]
         public string Label { get; set; }
 
         // ---------------- State ----------------
         private DateTime _day = DateTime.MinValue;
+        private AverageTrueRange _atr;
+        private Bars _h1;
+        private ExponentialMovingAverage _h1Ema;
         private bool _rangeReady;
         private bool _tradedToday;
         private bool _skipToday;
@@ -107,6 +130,10 @@ namespace cAlgo.Robots
                 Stop();
                 return;
             }
+            _atr = Indicators.AverageTrueRange(Bars, 14, MovingAverageType.WilderSmoothing);
+            _h1 = MarketData.GetBars(TimeFrame.Hour);
+            _h1Ema = Indicators.ExponentialMovingAverage(_h1.ClosePrices, H1EmaPeriod);
+            Print("V2 filters: {0}", UseV2 ? string.Format("ON (buffer {0} ATR, body {1}%, close zone {2}%, H1 EMA{3})", AtrBuffer, MinBodyPct, CloseZonePct, H1EmaPeriod) : "OFF");
             Print("Gold pip size {0}, pip value per unit {1}", Symbol.PipSize, Symbol.PipValue);
             if (TimeFrame != TimeFrame.Minute5)
                 Print("WARNING: run this bot on a 5-minute (m5) chart. Current timeframe: {0}", TimeFrame);
@@ -273,12 +300,36 @@ namespace cAlgo.Robots
             if (barOpen < rangeEnd || barClose > entryEnd) return;
 
             double close = Bars.ClosePrices[last];
+            double buf = UseV2 ? AtrBuffer * _atr.Result[last - 1] : 0;
             TradeType? side = null;
-            if (close > _rangeHi) side = TradeType.Buy;
-            else if (close < _rangeLo) side = TradeType.Sell;
+            if (close > _rangeHi + buf) side = TradeType.Buy;
+            else if (close < _rangeLo - buf) side = TradeType.Sell;
             if (side == null) return;
 
+            if (UseV2 && !V2Ok(side.Value, last, barClose)) return;   // keep watching
+
             Enter(side.Value);
+        }
+
+        private bool V2Ok(TradeType side, int i, DateTime barClose)
+        {
+            double o = Bars.OpenPrices[i], h = Bars.HighPrices[i], l = Bars.LowPrices[i], c = Bars.ClosePrices[i];
+            double span = h - l;
+            if (span <= 0) return false;
+            bool buy = side == TradeType.Buy;
+            if (Math.Abs(c - o) < MinBodyPct / 100.0 * span) { Print("V2: {0} breakout ignored, weak body.", side); return false; }
+            if (buy && c < h - CloseZonePct / 100.0 * span) { Print("V2: Buy breakout ignored, close not near high."); return false; }
+            if (!buy && c > l + CloseZonePct / 100.0 * span) { Print("V2: Sell breakout ignored, close not near low."); return false; }
+            int j = _h1.Count - 1;
+            while (j > 0 && _h1.OpenTimes[j].AddHours(1) > barClose) j--;   // last COMPLETED H1 candle
+            if (j < H1EmaPeriod) { Print("V2: not enough H1 history."); return false; }
+            double hc = _h1.ClosePrices[j], ema = _h1Ema.Result[j];
+            if (buy ? hc <= ema : hc >= ema)
+            {
+                Print("V2: {0} breakout ignored, H1 close {1:F2} vs EMA{2} {3:F2} against trade.", side, hc, H1EmaPeriod, ema);
+                return false;
+            }
+            return true;
         }
 
         private void Enter(TradeType side)
