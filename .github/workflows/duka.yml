@@ -9,6 +9,10 @@ on:
         default: '730'
       merge:
         default: ''
+      skip:
+        default: '0'
+      workers:
+        default: '6'
 
 permissions:
   contents: write
@@ -16,15 +20,15 @@ permissions:
 jobs:
   dl:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 340
     steps:
       - uses: actions/checkout@v4
       - name: Download
-        run: DUKA_MERGE=${{ github.event.inputs.merge }} DUKA_WORKERS=6 DUKA_TRIES=8 DUKA_SYM=${{ github.event.inputs.sym }} DUKA_DAYS=${{ github.event.inputs.days }} DUKA_OUT=backtest/data/${{ github.event.inputs.sym }}_m5_${{ github.event.inputs.days }}d.csv.gz python3 backtest/duka.py
+        run: DUKA_MERGE=${{ github.event.inputs.merge }} DUKA_SKIP=${{ github.event.inputs.skip }} DUKA_WORKERS=${{ github.event.inputs.workers }} DUKA_TRIES=8 DUKA_SYM=${{ github.event.inputs.sym }} DUKA_DAYS=${{ github.event.inputs.days }} DUKA_OUT=backtest/data/${{ github.event.inputs.sym }}_m5_${{ github.event.inputs.days }}d${{ github.event.inputs.skip != '0' && format('_skip{0}', github.event.inputs.skip) || '' }}.csv.gz python3 backtest/duka.py
       - name: Commit
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git add backtest/data
           git diff --cached --quiet || git commit -m "Dukascopy data [skip ci]"
-          git pull --rebase -q && git push
+          for k in 1 2 3 4 5; do git pull --rebase -q && git push && break; sleep $((RANDOM % 20 + 5)); done

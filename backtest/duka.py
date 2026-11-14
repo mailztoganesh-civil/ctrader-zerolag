@@ -42,7 +42,7 @@ def day(d):
 
 def main():
     t0 = time.time()
-    end = datetime.now(timezone.utc).date() - timedelta(days=1)
+    end = datetime.now(timezone.utc).date() - timedelta(days=1 + int(os.environ.get("DUKA_SKIP", "0")))
     dates = [end - timedelta(days=k) for k in range(DAYS) if (end - timedelta(days=k)).weekday() != 5]
     m5, ok, fail = {}, 0, 0
     if os.environ.get("DUKA_MERGE") and os.path.exists(OUT):
