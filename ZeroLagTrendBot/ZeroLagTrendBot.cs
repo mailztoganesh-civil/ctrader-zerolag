@@ -14,10 +14,19 @@ namespace cAlgo.Robots
     public enum EntryMode { TrendFlip, Pullback, Both }
     public enum StopMode { Band, ATR, FixedPips }
     public enum SizeMode { FixedLots, RiskPercent }
+    public enum Preset { Custom, BTC_M30_Trail }
 
     [Robot(AccessRights = AccessRights.None, TimeZone = TimeZones.UTC, AddIndicators = false)]
     public class ZeroLagTrendBot : Robot
     {
+        // ---------------- Preset ----------------
+        // BTC_M30_Trail = settings from the BTC research (forex-data/results/btc/research2):
+        // M30 chart, H1 trend filter, band stop + 5x ATR trailing stop, no TP,
+        // close on opposite flip, loss filter on, no weekend entries. Overrides the matching
+        // parameters below; sizing (lots / risk %) is NOT changed.
+        [Parameter("Preset", Group = "Preset", DefaultValue = Preset.Custom)]
+        public Preset UsePreset { get; set; }
+
         // ---------------- Main (same defaults as the Pine script) ----------------
         [Parameter("Length", Group = "Main", DefaultValue = 70, MinValue = 2)]
         public int Length { get; set; }
@@ -104,6 +113,13 @@ namespace cAlgo.Robots
         [Parameter("Reward:Risk (0 = no TP)", Group = "Risk", DefaultValue = 2.0, MinValue = 0)]
         public double RR { get; set; }
 
+        // ---------------- Trailing stop ----------------
+        [Parameter("Use ATR Trailing Stop", Group = "Trailing Stop", DefaultValue = false)]
+        public bool UseAtrTrail { get; set; }
+
+        [Parameter("Trail Distance (x ATR14)", Group = "Trailing Stop", DefaultValue = 5.0, MinValue = 0.5)]
+        public double TrailAtrMult { get; set; }
+
         // ---------------- Filters ----------------
         [Parameter("Max Spread Pips (0 = off)", Group = "Filters", DefaultValue = 2.0, MinValue = 0)]
         public double MaxSpreadPips { get; set; }
@@ -116,6 +132,9 @@ namespace cAlgo.Robots
 
         [Parameter("End Hour UTC", Group = "Filters", DefaultValue = 18, MinValue = 0, MaxValue = 23)]
         public int EndHour { get; set; }
+
+        [Parameter("Skip Weekend Entries (Sat/Sun UTC)", Group = "Filters", DefaultValue = false)]
+        public bool SkipWeekend { get; set; }
 
         // ---------------- Loss filter ----------------
         [Parameter("Use Loss Filter", Group = "Loss Filter", DefaultValue = true)]
@@ -143,6 +162,7 @@ namespace cAlgo.Robots
 
         protected override void OnStart()
         {
+            ApplyPreset();
             _use = new[] { UseTF1, UseTF2, UseTF3, UseTF4, UseTF5 };
             _tfs = new[] { TF1, TF2, TF3, TF4, TF5 };
             _mtfBars = new Bars[5];
@@ -164,6 +184,31 @@ namespace cAlgo.Robots
                 Positions.Closed += OnPositionClosed;
                 Print("Loss filter: {0}", LossStateText());
             }
+        }
+
+        private void ApplyPreset()
+        {
+            if (UsePreset != Preset.BTC_M30_Trail) return;
+            Length = 70; Mult = 1.2;
+            Mode = EntryMode.TrendFlip;
+            AllowLong = true; AllowShort = true;
+            CloseOnOpposite = true;
+            MaxPositions = 1;
+            UseTF1 = false; UseTF2 = false; UseTF4 = false; UseTF5 = false;
+            UseTF3 = true; TF3 = TimeFrame.Hour;
+            SLMode = StopMode.Band;
+            RR = 0;                       // no take profit: trailing stop or opposite flip exits
+            UseAtrTrail = true; TrailAtrMult = 5.0;
+            MinSLPips = 0; MaxSLPips = 0; // forex pip limits do not fit BTC
+            MaxSpreadPips = 0;
+            UseSession = false;
+            SkipWeekend = true;
+            UseLossFilter = true; LossesToBlock = 2; OppositeOnlyOnFlip = true;
+            Print("Preset BTC_M30_Trail applied: H1 filter, band stop, 5x ATR trail, no TP, no weekend entries");
+            if (TimeFrame != TimeFrame.Minute30)
+                Print("WARNING: preset was tested on M30 charts, this chart is {0}", TimeFrame);
+            if (!SymbolName.ToUpper().Contains("BTC"))
+                Print("WARNING: preset was tested on BTCUSD, this symbol is {0}", SymbolName);
         }
 
         private void EnsureHistory(Bars b)
@@ -271,6 +316,9 @@ namespace cAlgo.Robots
             int i = c.Length - 1, j = c.Length - 2;
             bool flipUp = t[i] == 1 && t[j] <= 0;
             bool flipDn = t[i] == -1 && t[j] >= 0;
+
+            if (UseAtrTrail) TrailStops();
+            ReleaseBlockIfStuck(flipUp, flipDn);
             bool pbUp = t[i] == 1 && t[j] == 1 && c[i] > z[i] && c[j] <= z[j];
             bool pbDn = t[i] == -1 && t[j] == -1 && c[i] < z[i] && c[j] >= z[j];
             if (PullbackNeedsImpulse)
@@ -374,7 +422,57 @@ namespace cAlgo.Robots
             }
         }
 
+        // ---------------- ATR trailing stop ----------------
+        // On every closed bar: stop = best price since entry -/+ TrailAtrMult x ATR14 (last closed bar).
+        // Only ever tightens. If the new stop is already through the current price, close at market.
+        private void TrailStops()
+        {
+            double a = _atr.Result.Last(1);
+            if (double.IsNaN(a) || a <= 0) return;
+            int last = Bars.Count - 2;                      // last closed bar
+            foreach (var p in Positions.FindAll(Label, SymbolName))
+            {
+                int first = Bars.OpenTimes.GetIndexByTime(p.EntryTime);
+                if (first < 0 || first > last) continue;
+                bool isBuy = p.TradeType == TradeType.Buy;
+                double best = isBuy ? double.MinValue : double.MaxValue;
+                for (int k = first; k <= last; k++)
+                    best = isBuy ? Math.Max(best, Bars.HighPrices[k]) : Math.Min(best, Bars.LowPrices[k]);
+                double sl = Math.Round(isBuy ? best - TrailAtrMult * a : best + TrailAtrMult * a, Symbol.Digits);
+                bool tighter = !p.StopLoss.HasValue || (isBuy ? sl > p.StopLoss.Value : sl < p.StopLoss.Value);
+                if (!tighter) continue;
+                if (isBuy ? sl >= Symbol.Bid : sl <= Symbol.Ask)
+                {
+                    var cr = ClosePosition(p);
+                    Print("Trailing stop {0} already passed by price, closed {1}: {2}", sl, p.TradeType,
+                          cr.IsSuccessful ? "ok" : cr.Error.ToString());
+                    continue;
+                }
+                var r = p.ModifyStopLossPrice(sl);
+                if (r.IsSuccessful) Print("Trail {0}: SL -> {1} (best {2}, ATR {3:F2})", p.TradeType, sl, best, a);
+                else Print("Trail modify failed: {0}", r.Error);
+            }
+        }
+
         // ---------------- Loss filter ----------------
+        // Fix: a blocked side is normally released when an opposite trade opens. If no opposite
+        // trade can ever open on a flip (Allow Buys/Sells off, or Entry Mode = Pullback with
+        // "opposite side only on trend flip"), release it on the opposite trend flip instead,
+        // otherwise the bot would never trade that side again.
+        private void ReleaseBlockIfStuck(bool flipUp, bool flipDn)
+        {
+            if (!UseLossFilter || !_blockedSide.HasValue) return;
+            bool buyBlocked = _blockedSide.Value == TradeType.Buy;
+            if (!(buyBlocked ? flipDn : flipUp)) return;
+            bool oppositeDisabled = buyBlocked ? !AllowShort : !AllowLong;
+            bool flipNotEntry = Mode == EntryMode.Pullback && OppositeOnlyOnFlip;
+            if (oppositeDisabled || flipNotEntry)
+            {
+                Print("{0} side released on opposite trend flip (no opposite trade possible)", _blockedSide.Value);
+                _blockedSide = null; _streak = 0; _streakSide = null;
+            }
+        }
+
         private void RegisterClose(TradeType side, double netProfit)
         {
             if (netProfit < 0)
@@ -484,6 +582,11 @@ namespace cAlgo.Robots
         {
             if (Positions.FindAll(Label, SymbolName).Length >= MaxPositions) return;
             if (!SessionOk()) { Print("Outside trading hours, skipped: {0}", why); return; }
+            if (SkipWeekend && (Server.Time.DayOfWeek == DayOfWeek.Saturday || Server.Time.DayOfWeek == DayOfWeek.Sunday))
+            {
+                Print("Weekend, entry skipped: {0}", why);
+                return;
+            }
 
             double spreadPips = Symbol.Spread / Symbol.PipSize;
             if (MaxSpreadPips > 0 && spreadPips > MaxSpreadPips)
