@@ -1,20 +1,19 @@
-// SmaPullbackBot - SMA 9/18 crossover -> move -> pullback to MA -> bounce entry (cTrader cBot)
+// SmaPullbackBot v2 - SMA 9/18 crossover -> move -> pullback to MA -> bounce, WITH the daily trend (cTrader cBot)
 //
 // Buy setup (sell = exact mirror):
+//   0. TREND    yesterday's daily close is ABOVE the daily SMA 50 (no buys in a daily downtrend / range below it).
+//               Optional extra filters: SMA 200 + SMA 200 slope on the chart timeframe.
 //   1. CROSS    SMA 9 crosses above SMA 18 on a closed candle.
-//               (optional) Trend filter: close must be above SMA 200, else the cross is ignored.
-//   2. MOVE     price runs away: highest high since the cross is at least 'Move Size (x ATR)'
-//               above SMA 9.
-//   3. PULLBACK a candle's low touches the chosen MA (SMA 9 or SMA 18).
-//               Cancelled if a candle closes below SMA 18, or no bounce within 'Max Pullback Candles'.
+//   2. MOVE     highest high since the cross is at least 'Move Size (x ATR)' above SMA 9.
+//   3. PULLBACK a candle's low touches SMA 18 (or SMA 9). Cancelled if a candle closes below SMA 18
+//               or no bounce within 'Max Pullback Candles'.
 //   4. BOUNCE   a candle closes above the previous candle's high AND above SMA 9 -> BUY at market.
-//   SL  below the lowest low of the pullback (- buffer). TP = RR x risk.
-//   One trade per crossover, one position at a time. An opposite cross resets everything.
+//   SL below the pullback low (- buffer), TP = 3R. Stop must be 0.3-3 x ATR. One trade per cross.
 //
-// Backtest (Dukascopy M5, Nov 2024 - Nov 2026, RR 2, move 1 ATR, touch SMA 18, 0.8 pip cost):
-//   No filter : negative on every major pair on M5/M15 (PF 0.75-0.91).
-//   SMA200 filter on : roughly break-even (EURUSD M5 PF 1.01, GBPUSD M15 1.03, EURJPY M15 1.06).
-//   => NOT a proven edge. Run on DEMO only until it shows results.
+// Backtest H1, Nov 2015 - Nov 2026 (Dukascopy), 1 pip cost per trade, defaults below:
+//   EURUSD 215 trades +33R PF 1.21 (6/10 years positive)   EURJPY 260 trades +71R PF 1.39 (8/10 years positive)
+//   Stayed positive on both pairs with 2 pip costs, RR 2.5-4, move 0.5-1.5 ATR, daily SMA 20/100.
+//   NOT profitable on GBPUSD, USDCAD, XAUUSD, and NOT on M5/M15 -> use EURUSD / EURJPY on H1 only.
 
 using System;
 using System.Linq;
@@ -45,27 +44,36 @@ namespace cAlgo.Robots
         [Parameter("Max Pullback Candles", Group = "Strategy", DefaultValue = 20, MinValue = 1)]
         public int MaxPbBars { get; set; }
 
-        [Parameter("Trend Filter SMA 200", Group = "Strategy", DefaultValue = true)]
+        [Parameter("Daily Trend Filter", Group = "Trend", DefaultValue = true)]
+        public bool UseDaily { get; set; }
+
+        [Parameter("Daily SMA Period", Group = "Trend", DefaultValue = 50, MinValue = 5)]
+        public int DailyPeriod { get; set; }
+
+        [Parameter("SMA 200 Filter", Group = "Trend", DefaultValue = false)]
         public bool UseTrend { get; set; }
 
-        [Parameter("Trend SMA Period", Group = "Strategy", DefaultValue = 200, MinValue = 20)]
+        [Parameter("SMA 200 Slope Filter", Group = "Trend", DefaultValue = false)]
+        public bool UseSlope { get; set; }
+
+        [Parameter("Trend SMA Period", Group = "Trend", DefaultValue = 200, MinValue = 20)]
         public int TrendPeriod { get; set; }
 
         // ---------------- Risk ----------------
         [Parameter("Risk % per Trade", Group = "Risk", DefaultValue = 1.0, MinValue = 0.1, MaxValue = 10)]
         public double RiskPct { get; set; }
 
-        [Parameter("Reward:Risk (TP)", Group = "Risk", DefaultValue = 2.0, MinValue = 0.5)]
+        [Parameter("Reward:Risk (TP)", Group = "Risk", DefaultValue = 3.0, MinValue = 0.5)]
         public double RR { get; set; }
 
         [Parameter("SL Buffer Pips", Group = "Risk", DefaultValue = 1.0, MinValue = 0)]
         public double BufferPips { get; set; }
 
-        [Parameter("Min SL Pips", Group = "Risk", DefaultValue = 5, MinValue = 0)]
-        public double MinSlPips { get; set; }
+        [Parameter("Min SL (x ATR)", Group = "Risk", DefaultValue = 0.3, MinValue = 0)]
+        public double MinSlAtr { get; set; }
 
-        [Parameter("Max SL Pips", Group = "Risk", DefaultValue = 40, MinValue = 1)]
-        public double MaxSlPips { get; set; }
+        [Parameter("Max SL (x ATR)", Group = "Risk", DefaultValue = 3.0, MinValue = 0.5)]
+        public double MaxSlAtr { get; set; }
 
         [Parameter("Use Min Lot If Risk Too Small", Group = "Risk", DefaultValue = true)]
         public bool UseMinLot { get; set; }
@@ -74,16 +82,16 @@ namespace cAlgo.Robots
         public double MaxRiskAtMinLot { get; set; }
 
         // ---------------- Safety ----------------
-        [Parameter("Start Hour UTC", Group = "Safety", DefaultValue = 7, MinValue = 0, MaxValue = 23)]
+        [Parameter("Start Hour UTC", Group = "Safety", DefaultValue = 0, MinValue = 0, MaxValue = 23)]
         public int StartHour { get; set; }
 
-        [Parameter("End Hour UTC", Group = "Safety", DefaultValue = 20, MinValue = 1, MaxValue = 24)]
+        [Parameter("End Hour UTC", Group = "Safety", DefaultValue = 24, MinValue = 1, MaxValue = 24)]
         public int EndHour { get; set; }
 
         [Parameter("Max Trades Per Day", Group = "Safety", DefaultValue = 3, MinValue = 1)]
         public int MaxTradesPerDay { get; set; }
 
-        [Parameter("Max Spread Pips (0 = off)", Group = "Safety", DefaultValue = 2.0, MinValue = 0)]
+        [Parameter("Max Spread Pips (0 = off)", Group = "Safety", DefaultValue = 3.0, MinValue = 0)]
         public double MaxSpreadPips { get; set; }
 
         [Parameter("Stop Bot If Equity Below (0 = off)", Group = "Safety", DefaultValue = 0, MinValue = 0)]
@@ -94,6 +102,7 @@ namespace cAlgo.Robots
 
         private SimpleMovingAverage _fast, _slow, _trend;
         private AverageTrueRange _atr;
+        private Bars _daily;
 
         // state: 0 idle, 1 waiting for move, 2 waiting for pullback, 3 waiting for bounce
         private int _dir, _state, _touchBar;
@@ -108,6 +117,11 @@ namespace cAlgo.Robots
             _slow = Indicators.SimpleMovingAverage(Bars.ClosePrices, SlowPeriod);
             _trend = Indicators.SimpleMovingAverage(Bars.ClosePrices, TrendPeriod);
             _atr = Indicators.AverageTrueRange(14, MovingAverageType.WilderSmoothing);
+            _daily = MarketData.GetBars(TimeFrame.Daily);
+            while (_daily.Count < DailyPeriod + 30 && _daily.LoadMoreHistory() > 0) { }
+            if (TimeFrame != TimeFrame.Hour) Print("WARNING: tested on H1 only. Current timeframe: {0}", TimeFrame);
+            string sym = SymbolName.ToUpper();
+            if (!sym.Contains("EURUSD") && !sym.Contains("EURJPY")) Print("WARNING: profitable in tests on EURUSD and EURJPY only. Current: {0}", SymbolName);
 
             Positions.Opened += a => { if (a.Position.Label == Label && a.Position.SymbolName == SymbolName) Print("{0} opened at {1}, SL {2}, TP {3}", a.Position.TradeType, a.Position.EntryPrice, a.Position.StopLoss, a.Position.TakeProfit); };
             Positions.Closed += a => { if (a.Position.Label == Label && a.Position.SymbolName == SymbolName) Print("{0} closed ({1}) net {2:F2}", a.Position.TradeType, a.Reason, a.Position.NetProfit); };
@@ -116,8 +130,8 @@ namespace cAlgo.Robots
             int start = Math.Max(TrendPeriod, SlowPeriod) + 2;
             for (int i = start; i <= Bars.Count - 2; i++) Step(i, false);
 
-            Print("SmaPullbackBot started on {0} {1}. SMA {2}/{3}, move {4} ATR, touch {5}, RR {6}, risk {7}%, trend filter {8}. State {9} dir {10}.",
-                SymbolName, TimeFrame, FastPeriod, SlowPeriod, MoveAtr, Touch, RR, RiskPct, UseTrend, _state, _dir);
+            Print("SmaPullbackBot started on {0} {1}. SMA {2}/{3}, move {4} ATR, touch {5}, RR {6}, risk {7}%, daily filter {8}. State {9} dir {10}.",
+                SymbolName, TimeFrame, FastPeriod, SlowPeriod, MoveAtr, Touch, RR, RiskPct, UseDaily, _state, _dir);
         }
 
         protected override void OnBar()
@@ -149,9 +163,9 @@ namespace cAlgo.Robots
                 _dir = up ? 1 : -1;
                 _used = false;
                 _ext = up ? h : l;
-                bool trendOk = !UseTrend || _dir * (c - _trend.Result[i]) > 0;
+                bool trendOk = TrendOk(_dir, i);
                 _state = trendOk ? 1 : 0;
-                if (live) Print("SMA cross {0}{1}", up ? "UP" : "DOWN", trendOk ? " -> waiting for move" : " (against SMA200, ignored)");
+                if (live) Print("SMA cross {0}{1}", up ? "UP" : "DOWN", trendOk ? " -> waiting for move" : " (against trend filter, ignored)");
                 return;
             }
             if (_state == 0 || _used) return;
@@ -206,7 +220,8 @@ namespace cAlgo.Robots
             double px = d == 1 ? Symbol.Ask : Symbol.Bid;
             double sl = _pbExt - d * BufferPips * Symbol.PipSize;
             double slPips = d * (px - sl) / Symbol.PipSize;
-            if (slPips < MinSlPips || slPips > MaxSlPips) { Print("{0} skipped: SL {1:F1} pips outside {2}-{3}.", tt, slPips, MinSlPips, MaxSlPips); _state = 2; return; }
+            double atrPips = _atr.Result[i] / Symbol.PipSize;
+            if (slPips < MinSlAtr * atrPips || slPips > MaxSlAtr * atrPips) { Print("{0} skipped: SL {1:F1} pips outside {2}-{3} x ATR ({4:F1} pips).", tt, slPips, MinSlAtr, MaxSlAtr, atrPips); _state = 2; return; }
 
             double units = Size(slPips, tt);
             if (units <= 0) { _state = 2; return; }
@@ -216,6 +231,23 @@ namespace cAlgo.Robots
                 r.IsSuccessful ? "ok" : r.Error.ToString());
             if (r.IsSuccessful) { _used = true; _state = 0; _tradesToday++; }
             else _state = 2;
+        }
+
+        // trend filters, checked at the crossover candle i
+        private bool TrendOk(int d, int i)
+        {
+            double c = Bars.ClosePrices[i];
+            if (UseTrend && d * (c - _trend.Result[i]) <= 0) return false;
+            if (UseSlope && d * (_trend.Result[i] - _trend.Result[i - 20]) <= 0) return false;
+            if (UseDaily)
+            {
+                int k = _daily.OpenTimes.GetIndexByTime(Bars.OpenTimes[i]) - 1;   // last COMPLETED day
+                if (k < DailyPeriod) return false;
+                double sum = 0;
+                for (int j = k - DailyPeriod + 1; j <= k; j++) sum += _daily.ClosePrices[j];
+                if (d * (_daily.ClosePrices[k] - sum / DailyPeriod) <= 0) return false;
+            }
+            return true;
         }
 
         private double Size(double slPips, TradeType tt)
